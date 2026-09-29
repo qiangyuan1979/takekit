@@ -18,7 +18,7 @@ pub struct LoadedProject {
 }
 
 /// 把「目录或 project.json 路径」统一解析为「根目录 + 文件路径」。
-fn resolve_project_path(path: &str) -> AppResult<(PathBuf, PathBuf)> {
+pub(crate) fn resolve_project_path(path: &str) -> AppResult<(PathBuf, PathBuf)> {
     let given = PathBuf::from(path);
     if given.is_dir() {
         let file = store::project_file(&given);

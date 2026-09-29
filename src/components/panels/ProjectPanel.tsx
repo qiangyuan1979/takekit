@@ -2,13 +2,13 @@
  * 第 1 步「立项」面板：4 张卡，把模糊喜好收敛成下游能用的硬参数。
  *
  * 所有控件都是受控的，写回路径只有一条：store.updateMeta。
- * 表单里不出现任何"三态 AI 改写"控件——那要等到 M2 有真实模型可调用时再加，
- * 现在放上去就是假 UI。
+ * 这里不放任何 AI 改写控件——立项是"人定调"的环节，AI 编排在第 2 步剧本里。
  */
 
 import { ASPECT_RATIOS, type AspectRatio, type WorkKind } from "../../lib/types";
 import { useAppStore } from "../../state/store";
 import { CollapsibleCard } from "../CollapsibleCard";
+import { Select, TextInput, joinList, splitList } from "../controls";
 import { FieldRow } from "../FieldRow";
 
 // ---------- 下拉字典（新手可选项，避免自由填写踩坑） ----------
@@ -70,68 +70,6 @@ const LLMS = [{ value: "openai-compat", label: "OpenAI 兼容（通用）" }];
 const VOICES = ["女声·清冷", "女声·温柔", "女声·御姐", "男声·沉稳", "男声·少年", "旁白·纪实"];
 
 const PRESETS = ["标准", "稳妥（少抽卡）", "大胆（强运动）"];
-
-// ---------- 控件 ----------
-
-function TextInput({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  placeholder?: string;
-}) {
-  return (
-    <input
-      className="input"
-      type="text"
-      value={value}
-      placeholder={placeholder}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  );
-}
-
-function Select<T extends string | number>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: readonly { value: T; label: string }[];
-  onChange: (next: T) => void;
-}) {
-  return (
-    <select
-      className="input"
-      value={value}
-      onChange={(event) => {
-        const raw = event.target.value;
-        const matched = options.find((option) => String(option.value) === raw);
-        if (matched) onChange(matched.value);
-      }}
-    >
-      {options.map((option) => (
-        <option key={String(option.value)} value={String(option.value)}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-/** 字符串数组 → 逗号分隔文本（存的时候再拆回来）。 */
-function joinList(values: string[]): string {
-  return values.join("，");
-}
-
-function splitList(text: string): string[] {
-  return text
-    .split(/[,，、\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
 
 // ---------- 面板 ----------
 
@@ -291,12 +229,10 @@ export function ProjectPanel() {
         </FieldRow>
 
         <FieldRow label="风格关键词" why="用逗号分隔，会作为附加词追加到提示词末尾，可留空">
-          <input
-            className="input"
-            type="text"
+          <TextInput
             value={joinList(meta.styleKeywords)}
             placeholder="例如：高对比，浅景深，胶片颗粒"
-            onChange={(event) => updateMeta({ styleKeywords: splitList(event.target.value) })}
+            onChange={(text) => updateMeta({ styleKeywords: splitList(text) })}
           />
         </FieldRow>
       </CollapsibleCard>

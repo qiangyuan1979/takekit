@@ -430,7 +430,7 @@ h2 {
   gap: 12px 18px;
   padding: 11px 0;
   border-bottom: 1px dashed var(--line);
-  align-items: center;
+  align-items: start;
 }
 
 .field:last-child {
@@ -438,6 +438,14 @@ h2 {
 }
 
 .field__meta {
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.field__control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -581,4 +589,590 @@ h2 {
   color: var(--text-dim);
   font-size: 13px;
   white-space: pre-wrap;
+}
+
+/* ---------- 剧本工作区（双栏对照） ---------- */
+
+.workspace {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scriptbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.scriptbar__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.split__col {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.split__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 14px 14px;
+}
+
+/* ---------- 左栏：AI 共创 ---------- */
+
+.chat__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat__title {
+  font-weight: 600;
+}
+
+.chat__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat__empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.chat__foot {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat__hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.chip {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* ---------- 消息气泡 ---------- */
+
+.bubble {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--bg-raised);
+}
+
+.bubble--user {
+  border-color: rgba(91, 140, 255, 0.4);
+  background: var(--accent-soft);
+}
+
+.bubble--error {
+  border-color: rgba(248, 81, 73, 0.45);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.bubble__title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.bubble__state {
+  margin-left: 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.bubble__body {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------- 小图标式按钮 ---------- */
+
+.icon-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.icon-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-btn--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.icon-btn--danger:hover:not(:disabled) {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.field__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- 场内联卡（一集 / 一场） ---------- */
+
+.subcard {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.subcard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.subcard__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.subcard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.subcard__body {
+  padding: 2px 10px 10px;
+}
+
+.subcard__body .field {
+  grid-template-columns: 150px 1fr;
+  gap: 8px 14px;
+  padding: 9px 0;
+}
+
+.scenelist__foot {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.episodeblock {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px 12px;
+  margin-top: 12px;
+}
+
+.episodeblock__title {
+  margin: 0 0 4px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* ---------- 对白 ---------- */
+
+.dialogues {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.dialogue {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.dialogue__narration {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ---------- 纯文本导入 ---------- */
+
+.import {
+  margin-top: 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.import__summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.import__hint {
+  margin: 8px 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.import .input--area {
+  margin-bottom: 8px;
+}
+
+/* ---------- 一致性引用 ---------- */
+
+.refs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.refs--warn {
+  color: var(--warn);
+}
+
+.refs--ok {
+  color: var(--ok);
+}
+
+/* ---------- 文本域 ---------- */
+
+.input--area {
+  resize: vertical;
+  min-height: 34px;
+  line-height: 1.6;
+}
+
+/* ---------- 设置弹层 ---------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.modal__panel {
+  position: relative;
+  width: min(620px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal__title {
+  font-size: 15px;
+}
+
+.modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- 服务商表单 ---------- */
+
+.providerform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.providerform__title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.providerform__hint {
+  margin-left: 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.providerform__row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.providerform__label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ---------- 资产工作区（第 3 步） ---------- */
+
+.assetbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.assetbar__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.assetbar__hint--warn {
+  color: var(--warn);
+}
+
+.assetbar__add {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.asset__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* ---------- 图片条 ---------- */
+
+.imagestrip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.imagestrip__empty {
+  margin: 0;
+}
+
+.thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.thumb {
+  margin: 0;
+  width: 108px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-raised);
+}
+
+.thumb__img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: var(--bg);
+}
+
+.thumb__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.thumb__flag {
+  margin-right: auto;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.thumb__btn {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.thumb__btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.thumb__btn--danger:hover {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.thumbs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.thumbs__note {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* ---------- 服装套装 ---------- */
+
+.costumes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.costume {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.costume__pick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ---------- 成对输入 ---------- */
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }

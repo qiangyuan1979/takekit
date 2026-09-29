@@ -18,6 +18,8 @@ const ERROR_TEMPLATES: Record<string, string> = {
   network: "网络异常：{detail}",
   auth: "鉴权失败，请检查 API Key：{detail}",
   provider: "「{provider}」返回错误：{detail}",
+  timeout: "等待模型响应超时：{detail}",
+  rate_limit: "请求太频繁，被服务商限流：{detail}",
   internal: "内部错误：{detail}",
   unknown: "{message}",
 };

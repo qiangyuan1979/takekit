@@ -1,5 +1,7 @@
 //! Tauri 命令层：前端唯一入口，所有参数校验与落盘都在这里收口。
 
+pub mod asset;
+pub mod llm;
 pub mod project;
 pub mod settings;
 

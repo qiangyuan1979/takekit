@@ -5,7 +5,7 @@
  * 序列化结果，这里改动必须同步改 Rust 并递增 `schemaVersion`。
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 // ---------- 枚举（字面量与 Rust serde 输出一致） ----------
 
@@ -84,6 +84,36 @@ export function defaultMeta(): Meta {
 }
 
 // ---------- 剧本 / 分镜 / 关键帧 ----------
+
+/** 剧本 A 段（创意核）与 B 段（大纲）的字段载体；C 段在 `episodes[].scenes`。 */
+export interface Script {
+  /** 一句话故事。 */
+  logline: string;
+  coreConflict: string;
+  protagonistGoal: string;
+  obstacle: string;
+  /** 爽点 / 钩子设计。 */
+  hook: string;
+  twist: string;
+  /** 结构模板 id（空 = 按作品类型取默认）。 */
+  structure: string;
+  /** 已锁定的字段名，AI 重写时跳过。 */
+  lockedFields: string[];
+}
+
+/** 与 Rust `Script::default()` 保持一致。 */
+export function defaultScript(): Script {
+  return {
+    logline: "",
+    coreConflict: "",
+    protagonistGoal: "",
+    obstacle: "",
+    hook: "",
+    twist: "",
+    structure: "",
+    lockedFields: [],
+  };
+}
 
 export interface Dialogue {
   characterId: string;
@@ -242,6 +272,12 @@ export interface Assets {
   styleLock: StyleLock;
 }
 
+/**
+ * 资产类别，字面量与 Rust `commands/asset.rs` 的 `AssetKind`
+ * （`#[serde(rename_all = "snake_case")]`）一致，直接当 IPC 参数用。
+ */
+export type AssetKind = "character" | "scene" | "prop" | "style";
+
 // ---------- 任务 / 模板引用 / 导出记录 ----------
 
 export interface Task {
@@ -276,6 +312,7 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   meta: Meta;
+  script: Script;
   episodes: Episode[];
   assets: Assets;
   tasks: Task[];
@@ -304,8 +341,15 @@ export interface ProviderConfig {
   model: string;
 }
 
+/** LLM 生成参数（只作用于文本模型）。 */
+export interface LlmOptions {
+  temperature: number;
+  maxTokens: number;
+}
+
 export interface AppSettings {
   llm: ProviderConfig;
+  llmOptions: LlmOptions;
   image: ProviderConfig;
   video: ProviderConfig;
   language: string;
@@ -316,9 +360,44 @@ export interface AppSettings {
 export function defaultSettings(): AppSettings {
   return {
     llm: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-4o-mini" },
+    llmOptions: { temperature: 0.8, maxTokens: 2048 },
     image: { baseUrl: "", apiKey: "", model: "" },
     video: { baseUrl: "", apiKey: "", model: "" },
     language: "zh-CN",
     onboardingEnabled: true,
   };
+}
+
+// ---------- LLM 适配器（镜像 Rust `adapters/llm/mod.rs`） ----------
+
+export type LlmRole = "system" | "user" | "assistant";
+
+export interface LlmMessage {
+  role: LlmRole;
+  content: string;
+}
+
+/** 省略 `temperature` / `maxTokens` 时由后端用设置里的默认值补齐。 */
+export interface LlmRequest {
+  messages: LlmMessage[];
+  temperature?: number | null;
+  maxTokens?: number | null;
+}
+
+export interface LlmUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface LlmResponse {
+  content: string;
+  model: string;
+  usage: LlmUsage;
+}
+
+/** 流式增量片段；`done` 为真后流即结束。 */
+export interface LlmChunk {
+  delta: string;
+  done: boolean;
 }

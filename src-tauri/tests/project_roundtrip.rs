@@ -183,6 +183,17 @@ fn sample_project() -> Project {
         created_at: "2026-09-29T08:00:00Z".into(),
     };
 
+    let script = Script {
+        logline: "被赶出家门的弃女携系统归来".into(),
+        core_conflict: "复仇与亲情的拉扯".into(),
+        protagonist_goal: "夺回公司控制权".into(),
+        obstacle: "继母与未婚夫的联手打压".into(),
+        hook: "每集结尾打脸一次".into(),
+        twist: "真正的幕后推手是父亲".into(),
+        structure: "three_act".into(),
+        locked_fields: vec!["logline".into()],
+    };
+
     Project {
         schema_version: SCHEMA_VERSION,
         id: "proj-1".into(),
@@ -190,6 +201,7 @@ fn sample_project() -> Project {
         created_at: "2026-09-29T08:00:00Z".into(),
         updated_at: "2026-09-29T09:30:00Z".into(),
         meta,
+        script,
         episodes: vec![episode],
         assets,
         tasks: vec![task],
@@ -245,6 +257,24 @@ fn project_json_uses_camel_case_keys() {
             "meta.{key} must be camelCase"
         );
     }
+
+    // 剧本段（创意核 / 大纲）
+    for key in [
+        "logline",
+        "coreConflict",
+        "protagonistGoal",
+        "obstacle",
+        "hook",
+        "twist",
+        "structure",
+        "lockedFields",
+    ] {
+        assert!(
+            value["script"].get(key).is_some(),
+            "script.{key} must be camelCase"
+        );
+    }
+    assert_eq!(value["script"]["coreConflict"], "复仇与亲情的拉扯");
 
     // 分镜 + 出题产物
     let shot = &value["episodes"][0]["scenes"][0]["shots"][0];
@@ -348,6 +378,8 @@ fn sparse_json_falls_back_to_defaults() {
     assert_eq!(project.meta.default_video_model, "kling");
     assert!(project.episodes.is_empty());
     assert!(project.assets.characters.is_empty());
+    assert_eq!(project.script.logline, "");
+    assert!(project.script.locked_fields.is_empty());
     assert!(project.tasks.is_empty());
 
     // 空对象（连 name 都没有）也必须能解析。

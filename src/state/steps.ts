@@ -6,6 +6,7 @@
  */
 
 import type { Meta, Project } from "../lib/types";
+import { undefinedCharacterRefs } from "../lib/scriptOps";
 
 export type StepId =
   "project" | "script" | "assets" | "storyboard" | "keyframes" | "prompt" | "generate" | "post";
@@ -39,7 +40,7 @@ export const STEPS: readonly StepDef[] = [
     label: "剧本",
     goal: "把故事变成结构化的「场」：创意核 → 大纲 → 正文 → 一致性引用",
     tip: "别在这一步拆镜，拆镜是第 4 步的事",
-    ready: false,
+    ready: true,
   },
   {
     id: "assets",
@@ -47,7 +48,7 @@ export const STEPS: readonly StepDef[] = [
     label: "资产",
     goal: "锁定人物、场景、画风的视觉基准（短剧一致性成败在这一步）",
     tip: "角色形象不固定，后面每一镜都会「变脸」",
-    ready: false,
+    ready: true,
   },
   {
     id: "storyboard",
@@ -120,14 +121,63 @@ function checkProjectMeta(meta: Meta): GuardResult {
 }
 
 /**
- * 进入下一步前的阻塞检查。未实现的环节暂时一律放行，
- * 待各自的里程碑补齐校验规则（M2 剧本、M3 资产、M4 分镜……）。
+ * 第 2 步验收：故事能一句话说清，且每一场都写到了"能开拍"的程度。
+ *
+ * 只卡这四件事，不卡文笔——C 段允许先用占位名，第 3 步会把它补成真正的角色卡。
+ */
+function checkScript(project: Project): GuardResult {
+  const issues: string[] = [];
+  if (!project.script.logline.trim()) issues.push("A 段：用一句话写清这个故事");
+  if (project.episodes.length === 0) {
+    issues.push("B 段：至少要有 1 集（可以先点「模板填充」起步）");
+    return { ok: false, issues };
+  }
+
+  for (const episode of project.episodes) {
+    const episodeLabel = `第 ${episode.no} 集`;
+    if (episode.scenes.length === 0) {
+      issues.push(`${episodeLabel}：至少写 1 场`);
+      continue;
+    }
+    for (const scene of episode.scenes) {
+      const sceneLabel = `${episodeLabel} 第 ${scene.no} 场`;
+      if (!scene.location.trim()) issues.push(`${sceneLabel}：填写地点`);
+      if (!scene.actionDesc.trim()) issues.push(`${sceneLabel}：写清这一场发生了什么`);
+      if (scene.characters.length === 0) issues.push(`${sceneLabel}：至少写一个出场角色`);
+    }
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+/**
+ * 第 3 步验收：剧本里出现过的角色都得有角色卡，否则后面每一镜都会「变脸」。
+ *
+ * 只卡"建档"这一件事：外貌字段与定妆照允许后补——先让新手把卡建起来，
+ * 再回到这步慢慢填，比一次卡死更容易走通流程。
+ */
+function checkAssets(project: Project): GuardResult {
+  const pending = undefinedCharacterRefs(project);
+  if (pending.length === 0) return { ok: true, issues: [] };
+  return {
+    ok: false,
+    issues: [`去第 3 步给这些角色建档：${pending.join("、")}`],
+  };
+}
+
+/**
+ * 进入下一步前的阻塞检查。尚未实现的环节一律放行，
+ * 待各自的里程碑补齐校验规则（M4 分镜……）。
  */
 export function checkStep(step: StepId, project: Project | null): GuardResult {
   if (!project) return { ok: false, issues: ["还没有新建或打开项目"] };
   switch (step) {
     case "project":
       return checkProjectMeta(project.meta);
+    case "script":
+      return checkScript(project);
+    case "assets":
+      return checkAssets(project);
     default:
       return { ok: true, issues: [] };
   }

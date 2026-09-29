@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod commands;
 pub mod error;
 pub mod project;
@@ -16,6 +17,12 @@ pub fn run() {
             commands::project::duplicate_project,
             commands::settings::get_settings,
             commands::settings::save_settings,
+            commands::llm::llm_complete,
+            commands::llm::llm_stream,
+            commands::asset::import_asset_image,
+            commands::asset::delete_asset_files,
+            commands::asset::delete_asset_dir,
+            commands::asset::generate_asset_images,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

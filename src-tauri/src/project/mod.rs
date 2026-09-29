@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// 当前 schema 版本。结构发生不兼容变更时递增，并在 `migrate.rs` 补迁移步骤。
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// 新建实体 ID。
 pub fn new_id() -> String {
@@ -234,6 +234,33 @@ impl Default for Meta {
             param_preset: "标准".into(),
         }
     }
+}
+
+// ---------- 剧本：创意核 / 大纲 ----------
+
+/// 剧本四段中的 A 段（创意核）与 B 段（大纲）的字段载体（spec §5.2）。
+///
+/// C 段（剧本正文，按场）落在 `episodes[].scenes`；D 段（一致性引用）由
+/// `scene.characters` 与 `assets` 运行时推导，均不在此结构重复存储。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Script {
+    /// 一句话故事。
+    pub logline: String,
+    /// 核心冲突。
+    pub core_conflict: String,
+    /// 主角目标。
+    pub protagonist_goal: String,
+    /// 阻碍（阻力来源）。
+    pub obstacle: String,
+    /// 爽点 / 钩子设计。
+    pub hook: String,
+    /// 结尾反转。
+    pub twist: String,
+    /// 结构模板 id（空 = 按作品类型取默认）；模板正文由前端持有，此处只存 id。
+    pub structure: String,
+    /// 已锁定的字段名集合，AI 重写时跳过。
+    pub locked_fields: Vec<String>,
 }
 
 // ---------- 剧本：集 / 场 / 对白 ----------
@@ -683,6 +710,8 @@ pub struct Project {
     #[serde(default)]
     pub meta: Meta,
     #[serde(default)]
+    pub script: Script,
+    #[serde(default)]
     pub episodes: Vec<Episode>,
     #[serde(default)]
     pub assets: Assets,
@@ -715,6 +744,7 @@ impl Project {
             created_at: now.clone(),
             updated_at: now,
             meta,
+            script: Script::default(),
             episodes: vec![Episode::new(1, "主片")],
             assets: Assets::default(),
             tasks: Vec::new(),

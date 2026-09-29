@@ -5,13 +5,16 @@
  * 一堆禁用控件，而应该只看到两个动作：新建 或 打开。
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { SAVE_LABELS, describeError } from "../i18n";
 import { checkStep, stepById, STEPS, type StepId } from "../state/steps";
 import { useAppStore } from "../state/store";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { AssetsWorkspace } from "./assets/AssetsWorkspace";
 import { ProjectPanel } from "./panels/ProjectPanel";
+import { ScriptWorkspace } from "./script/ScriptWorkspace";
+import { SettingsPanel } from "./SettingsPanel";
 import { StepGuard } from "./StepGuard";
 import { StepRail } from "./StepRail";
 
@@ -58,6 +61,8 @@ export function AppShell() {
     save,
     clearError,
   } = useAppStore();
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     void bootstrap();
@@ -148,6 +153,14 @@ export function AppShell() {
         <div className="topbar__right">
           <button
             type="button"
+            className="btn btn--ghost"
+            onClick={() => setSettingsOpen(true)}
+            title="配置模型服务与 API Key"
+          >
+            设置
+          </button>
+          <button
+            type="button"
             className={`save save--${saveState}`}
             onClick={() => void save()}
             disabled={saveState === "saving"}
@@ -183,7 +196,15 @@ export function AppShell() {
 
           <div className="stage__content">
             <ErrorBoundary>
-              {step.id === "project" ? <ProjectPanel /> : <StepPlaceholder stepId={step.id} />}
+              {step.id === "project" ? (
+                <ProjectPanel />
+              ) : step.id === "script" ? (
+                <ScriptWorkspace />
+              ) : step.id === "assets" ? (
+                <AssetsWorkspace />
+              ) : (
+                <StepPlaceholder stepId={step.id} />
+              )}
             </ErrorBoundary>
           </div>
 
@@ -210,6 +231,8 @@ export function AppShell() {
           </footer>
         </main>
       </div>
+
+      {settingsOpen ? <SettingsPanel onClose={() => setSettingsOpen(false)} /> : null}
     </div>
   );
 }

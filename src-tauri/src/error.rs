@@ -24,6 +24,10 @@ pub enum AppError {
     Auth(String),
     #[error("Provider `{provider}` error: {detail}")]
     Provider { provider: String, detail: String },
+    #[error("Request timed out: {detail}")]
+    Timeout { detail: String },
+    #[error("Rate limited by provider: {detail}")]
+    RateLimit { detail: String },
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -41,6 +45,8 @@ impl AppError {
             AppError::Network(_) => "network",
             AppError::Auth(_) => "auth",
             AppError::Provider { .. } => "provider",
+            AppError::Timeout { .. } => "timeout",
+            AppError::RateLimit { .. } => "rate_limit",
             AppError::Internal(_) => "internal",
         }
     }
@@ -77,6 +83,12 @@ impl AppError {
             }
             AppError::Provider { provider, detail } => {
                 m.insert("provider".into(), provider.clone());
+                m.insert("detail".into(), detail.clone());
+            }
+            AppError::Timeout { detail } => {
+                m.insert("detail".into(), detail.clone());
+            }
+            AppError::RateLimit { detail } => {
                 m.insert("detail".into(), detail.clone());
             }
             AppError::Internal(msg) => {
@@ -144,6 +156,8 @@ mod tests {
                     detail: "d".into(),
                 },
             ),
+            ("timeout", AppError::Timeout { detail: "d".into() }),
+            ("rate_limit", AppError::RateLimit { detail: "d".into() }),
             ("internal", AppError::Internal("i".into())),
         ];
 

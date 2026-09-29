@@ -6,7 +6,7 @@
 use serde_json::{json, Value};
 
 use takekit_lib::error::AppError;
-use takekit_lib::project::migrate;
+use takekit_lib::project::migrate::{self, BASELINE_VERSION};
 use takekit_lib::project::SCHEMA_VERSION;
 
 #[test]
@@ -22,7 +22,7 @@ fn illegal_version_is_treated_as_baseline() {
         let value = json!({ "schemaVersion": bad, "name": "x" });
         assert_eq!(
             migrate::peek_version(&value),
-            SCHEMA_VERSION,
+            BASELINE_VERSION,
             "illegal version {bad} must fall back to baseline"
         );
         let migrated = migrate::migrate_to_current(value).unwrap();
@@ -56,14 +56,37 @@ fn current_version_passes_through() {
 
 #[test]
 fn needs_migration_flags_outdated_documents() {
-    // 缺失版本 → 视为基线：v1 阶段与当前版本一致，无需迁移。
-    assert!(!migrate::needs_migration(&json!({ "name": "x" })));
+    // 缺失版本 → 视为基线 v1，落后于当前版本，需要迁移（以便迁移后补写版本号并自动备份）。
+    assert!(migrate::needs_migration(&json!({ "name": "x" })));
+    assert!(migrate::needs_migration(
+        &json!({ "schemaVersion": BASELINE_VERSION })
+    ));
+    // 已是当前版本 → 无需迁移。
     assert!(!migrate::needs_migration(
         &json!({ "schemaVersion": SCHEMA_VERSION })
     ));
     assert!(migrate::needs_migration(
         &json!({ "schemaVersion": SCHEMA_VERSION + 3 })
     ));
+}
+
+#[test]
+fn v1_document_gains_default_script() {
+    // 旧文件没有 script 段：迁移后必须补出空对象，供 Script 字段默认值填充。
+    let migrated =
+        migrate::migrate_to_current(json!({ "schemaVersion": 1, "name": "旧项目" })).unwrap();
+    assert_eq!(migrated["schemaVersion"], json!(SCHEMA_VERSION));
+    assert!(
+        migrated["script"].is_object(),
+        "migration must insert a script object"
+    );
+
+    // 已有 script 内容必须原样保留，不被覆盖。
+    let kept = migrate::migrate_to_current(
+        json!({ "schemaVersion": 1, "script": { "logline": "已有一句话" } }),
+    )
+    .unwrap();
+    assert_eq!(kept["script"]["logline"], "已有一句话");
 }
 
 #[test]

@@ -6,6 +6,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { StepGuard } from "../src/components/StepGuard";
+import { makeEpisode, makeScene } from "../src/lib/scriptOps";
+import { defaultScript } from "../src/lib/types";
 import { checkStep } from "../src/state/steps";
 import { makeProject } from "./support/project";
 
@@ -50,8 +52,59 @@ describe("checkStep('project')", () => {
   });
 
   it("尚未实现的环节暂时一律放行", () => {
-    expect(checkStep("script", makeProject()).ok).toBe(true);
+    expect(checkStep("assets", makeProject()).ok).toBe(true);
     expect(checkStep("post", makeProject()).ok).toBe(true);
+  });
+});
+
+describe("checkStep('script')", () => {
+  const script = { ...defaultScript(), logline: "外卖员一夜之间成了公司继承人。" };
+  const oneScene = makeScene({
+    no: 1,
+    location: "写字楼大堂",
+    characters: ["【主角】"],
+    actionDesc: "他被人拦在门外，只能隔着玻璃看着里面的人举杯。",
+  });
+
+  it("一句话故事为空时不放行", () => {
+    const result = checkStep("script", makeProject({}, { script: defaultScript() }));
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain("A 段：用一句话写清这个故事");
+  });
+
+  it("一集都没有时提示可以先用模板填充", () => {
+    const result = checkStep("script", makeProject({}, { script }));
+    expect(result.ok).toBe(false);
+    expect(result.issues.join()).toContain("模板填充");
+  });
+
+  it("每一场的必填项缺失时逐条报出场号", () => {
+    const project = makeProject(
+      {},
+      {
+        script,
+        episodes: [makeEpisode(1, { scenes: [oneScene, makeScene({ no: 2, location: "天台" })] })],
+      },
+    );
+
+    const result = checkStep("script", project);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain("第 1 集 第 2 场：写清这一场发生了什么");
+    expect(result.issues).toContain("第 1 集 第 2 场：至少写一个出场角色");
+    expect(result.issues).not.toContain("第 1 集 第 1 场：填写地点");
+  });
+
+  it("场次写全（允许占位角色名）后放行", () => {
+    const project = makeProject(
+      {},
+      {
+        script,
+        episodes: [makeEpisode(1, { scenes: [oneScene] })],
+      },
+    );
+
+    expect(checkStep("script", project).ok).toBe(true);
   });
 });
 

@@ -32,11 +32,29 @@ impl Default for ProviderConfig {
     }
 }
 
+/// LLM 生成参数（只作用于文本模型，故不塞进通用的 `ProviderConfig`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LlmOptions {
+    pub temperature: f64,
+    pub max_tokens: u32,
+}
+
+impl Default for LlmOptions {
+    fn default() -> Self {
+        Self {
+            temperature: 0.8,
+            max_tokens: 2048,
+        }
+    }
+}
+
 /// 全局设置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub llm: ProviderConfig,
+    pub llm_options: LlmOptions,
     pub image: ProviderConfig,
     pub video: ProviderConfig,
     pub language: String,
@@ -51,6 +69,7 @@ impl Default for AppSettings {
                 api_key: String::new(),
                 model: "gpt-4o-mini".into(),
             },
+            llm_options: LlmOptions::default(),
             image: ProviderConfig::default(),
             video: ProviderConfig::default(),
             language: "zh-CN".into(),
@@ -117,6 +136,26 @@ pub fn save_settings(app: AppHandle, settings: AppSettings) -> AppResult<AppSett
 /// 密钥库中的键名。
 fn api_key_key(slot: &str) -> String {
     format!("{slot}.api_key")
+}
+
+/// 取当前 LLM 接入配置（含密钥库里的 api_key），供适配器层建 provider。
+///
+/// 单独抽出来是为了让密钥只在这一处从密钥库流入内存，命令层不重复拼装。
+pub(crate) fn load_llm_config(app: &AppHandle) -> AppResult<(ProviderConfig, LlmOptions)> {
+    let data = app_data_dir(app)?;
+    let mut settings = read_settings(&data)?;
+    let secrets = SecretStore::new(&data);
+    settings.llm.api_key = secrets.get(&api_key_key("llm"))?.unwrap_or_default();
+    Ok((settings.llm, settings.llm_options))
+}
+
+/// 取当前图片接入配置（含密钥库里的 api_key），供图片适配器建 provider。
+pub(crate) fn load_image_config(app: &AppHandle) -> AppResult<ProviderConfig> {
+    let data = app_data_dir(app)?;
+    let mut settings = read_settings(&data)?;
+    let secrets = SecretStore::new(&data);
+    settings.image.api_key = secrets.get(&api_key_key("image"))?.unwrap_or_default();
+    Ok(settings.image)
 }
 
 /// 读 `settings.json`；缺失或损坏时回落默认值（不阻塞启动）。
