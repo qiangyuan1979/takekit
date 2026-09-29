@@ -1,0 +1,47 @@
+[package]
+name = "takekit"
+version = "0.1.0"
+description = "TakeKit - 新手友好的短视频 / 短剧辅助制作工具"
+authors = ["qiangyuan1979"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to only be an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "takekit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# protocol-asset：允许 webview 通过 asset:// 协议读取本地文件（参考图 / 关键帧 / 片段预览）。
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2.7.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+# 生产构建必须显式启用：tauri-macros 用 cfg!(not(feature = "custom-protocol")) 推导 dev 开关，
+# 缺失该 feature 会让 release 包仍按 dev 处理——只连 build.devUrl、内嵌资源为空，脱离 dev server 即白屏。
+# 注意 default 里不能加它，否则 `npm run tauri dev` 会改走自定义协议、丢失 devUrl 热更新。
+custom-protocol = ["tauri/custom-protocol"]
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
