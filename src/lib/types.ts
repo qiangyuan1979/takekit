@@ -401,3 +401,46 @@ export interface LlmChunk {
   delta: string;
   done: boolean;
 }
+
+// ---------- 生成（M7，镜像 Rust `commands/generate.rs`） ----------
+
+/** 统一视频请求：拼好的提示词 + 参数，交给后端适配器翻译 / 执行。 */
+export interface VideoRequest {
+  prompt: string;
+  params: VideoParams;
+}
+
+/** 生成任务存的请求载荷：统一请求 + 三层定位（分组、归档命名都靠它）。 */
+export interface VideoTaskRequest extends VideoRequest {
+  episodeId: string;
+  sceneId: string;
+  shotId: string;
+  /** 项目内全局镜号（跨集 / 场连续），后端据此归档 `clips/<镜号>_<版本>.<ext>`。 */
+  shotNo: number;
+}
+
+/** `generate_clips` 的一条作业；字段名与 Rust `GenerateJob` 严格一致。 */
+export interface GenerateJob {
+  taskId: string;
+  shotNo: number;
+  request: VideoRequest;
+}
+
+/** 进度事件；字段名与 Rust `GenerateEvent` 严格一致（枚举字面量见 `TaskStatus`）。 */
+export interface GenerateEvent {
+  taskId: string;
+  status: TaskStatus;
+  /** 成功时为项目相对路径（如 `clips/007_01.mp4`）。 */
+  clipPath?: string | null;
+  mime?: string | null;
+  /** 厂商原文或英文消息，仅供日志与兜底展示。 */
+  error?: string | null;
+  /** 用户可见文案由前端按 `code` 翻译（见 `i18n.ts`）。 */
+  errorCode?: string | null;
+  errorArgs?: Record<string, string> | null;
+}
+
+/** 任务产物的判别联合：成功是片段，失败是错误码 + 翻译参数。 */
+export type TaskResult =
+  | { kind: "clip"; path: string; mime: string }
+  | { kind: "error"; code: string; args?: Record<string, string> };

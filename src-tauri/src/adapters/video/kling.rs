@@ -9,14 +9,20 @@
 //! - 分辨率不是独立字段，只有 `mode = std(720p) / pro(1080p)`；
 //! - 不支持帧率、运动强度、固定种子、参考图权重 → 忽略并逐条提示。
 //!
-//! 本文件只做翻译（M6）；真正的 HTTP 调用在 M7 加。
+//! 本文件有两层：`translate`（M6 纯函数）产出请求体，[`KlingGenerator`]（M7）
+//! 负责真正发请求。
 
 use super::{
-    non_empty, truncate_prompt, Translated, VideoProvider, VideoRequest, DEFAULT_DURATION_MS,
-    DEFAULT_MOTION_STRENGTH,
+    build_client, download_video, non_empty, provider_error, request_json, truncate_prompt, Polled,
+    Submitted, Translated, VideoCredentials, VideoGenerator, VideoOutput, VideoProvider,
+    VideoRequest, VideoStatus, DEFAULT_DURATION_MS, DEFAULT_MOTION_STRENGTH,
 };
+use crate::error::{AppError, AppResult};
 use crate::project::VideoParams;
-use serde_json::json;
+use futures_util::future::BoxFuture;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::time::Duration;
 
 /// 适配器标识。
 pub const NAME: &str = "kling";
@@ -174,6 +180,166 @@ fn dropped_params(params: &VideoParams) -> Vec<String> {
     notes
 }
 
+// ---------- 生成侧实现（M7） ----------
+
+/// 可灵的提交与查询端点。
+const SUBMIT_BASE: &str = "/v1/videos";
+
+/// 文本驱动入口。
+const TEXT2VIDEO: &str = "text2video";
+
+/// 图驱动入口（带首帧时走这条）。
+const IMAGE2VIDEO: &str = "image2video";
+
+/// 可灵视频生成器。
+///
+/// 复用 [`KlingProvider::translate`] 产出请求体——**翻译逻辑只有一份**，
+/// 因此"界面上看到的预览"与"真正发出去的请求"天然一致。
+pub struct KlingGenerator {
+    client: Client,
+    /// 已去掉末尾斜杠的 base URL。
+    base: String,
+    api_key: String,
+    provider: KlingProvider,
+    timeout: Duration,
+}
+
+impl KlingGenerator {
+    /// 构造生成器；配置缺失在第一处就明确报错，而不是等到发请求。
+    pub fn new(credentials: &VideoCredentials) -> AppResult<Self> {
+        let base = credentials.base_url.trim();
+        if base.is_empty() {
+            return Err(AppError::Validation {
+                field: "baseUrl".into(),
+                detail: "video base URL is required".into(),
+            });
+        }
+        if credentials.api_key.trim().is_empty() {
+            return Err(AppError::Auth("video API key is not configured".into()));
+        }
+        Ok(Self {
+            client: build_client()?,
+            base: base.trim_end_matches('/').to_string(),
+            api_key: credentials.api_key.trim().to_string(),
+            provider: KlingProvider::new(&credentials.model),
+            timeout: credentials.timeout,
+        })
+    }
+
+    /// 可灵把业务码放在 body 里（HTTP 200 也可能是失败），故每个响应都要过这道闸。
+    fn check_code(&self, value: &Value) -> AppResult<()> {
+        let code = value.get("code").and_then(Value::as_i64).unwrap_or(0);
+        if code == 0 {
+            return Ok(());
+        }
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error");
+        Err(provider_error(NAME, &format!("code {code}: {message}")))
+    }
+}
+
+impl VideoGenerator for KlingGenerator {
+    fn name(&self) -> &'static str {
+        NAME
+    }
+
+    fn submit<'a>(&'a self, request: &'a VideoRequest) -> BoxFuture<'a, AppResult<Submitted>> {
+        Box::pin(async move {
+            let body = self.provider.translate(request).body;
+            // 可灵按"有没有首帧"分流到两个端点；这个选择只有提交时才知道，
+            // 故把它编码进 handle，轮询时据此还原 URL。
+            let mode = if body.get("image").is_some() {
+                IMAGE2VIDEO
+            } else {
+                TEXT2VIDEO
+            };
+            let url = format!("{}{SUBMIT_BASE}/{mode}", self.base);
+            let value = request_json(NAME, || {
+                self.client
+                    .post(&url)
+                    .bearer_auth(&self.api_key)
+                    .timeout(self.timeout)
+                    .json(&body)
+            })
+            .await?;
+            self.check_code(&value)?;
+
+            let task_id = value
+                .pointer("/data/task_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .ok_or_else(|| provider_error(NAME, "submit response has no data.task_id"))?;
+            Ok(Submitted {
+                task_id: task_id.to_string(),
+                handle: format!("{mode}:{task_id}"),
+            })
+        })
+    }
+
+    fn poll<'a>(&'a self, handle: &'a str) -> BoxFuture<'a, AppResult<Polled>> {
+        Box::pin(async move {
+            let (mode, task_id) = handle.split_once(':').ok_or_else(|| {
+                provider_error(NAME, &format!("malformed task handle `{handle}`"))
+            })?;
+            let url = format!("{}{SUBMIT_BASE}/{mode}/{task_id}", self.base);
+            let value = request_json(NAME, || {
+                self.client
+                    .get(&url)
+                    .bearer_auth(&self.api_key)
+                    .timeout(self.timeout)
+            })
+            .await?;
+            self.check_code(&value)?;
+
+            let raw = value
+                .pointer("/data/task_status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let status = match raw {
+                "submitted" => VideoStatus::Queued,
+                "processing" => VideoStatus::Running,
+                "succeed" => VideoStatus::Succeeded,
+                "failed" => VideoStatus::Failed,
+                other => {
+                    return Err(provider_error(
+                        NAME,
+                        &format!("unknown task_status `{other}`"),
+                    ))
+                }
+            };
+            let error = if status == VideoStatus::Failed {
+                value
+                    .pointer("/data/task_status_msg")
+                    .and_then(Value::as_str)
+                    .map(|msg| msg.to_string())
+            } else {
+                None
+            };
+            let video_url = value
+                .pointer("/data/task_result/videos/0/url")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+
+            Ok(Polled {
+                status,
+                video_url,
+                error,
+            })
+        })
+    }
+
+    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, AppResult<VideoOutput>> {
+        Box::pin(async move { download_video(&self.client, NAME, url, self.timeout).await })
+    }
+
+    /// 可灵没有取消端点，尽力而为：空操作，由命令层把本地任务标为已取消。
+    fn cancel<'a>(&'a self, _handle: &'a str) -> BoxFuture<'a, AppResult<()>> {
+        Box::pin(async move { Ok(()) })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +462,50 @@ mod tests {
         let out = provider.translate(&request(params));
         assert_eq!(out.body["image"], "data:image/png;base64,AAA");
         assert_eq!(out.body["image_tail"], "data:image/png;base64,BBB");
+    }
+
+    fn credentials() -> VideoCredentials {
+        VideoCredentials {
+            base_url: "https://api.example.com".into(),
+            api_key: "sk-test".into(),
+            model: String::new(),
+            timeout: Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn generator_requires_base_url_and_key() {
+        let mut creds = credentials();
+        creds.base_url = "  ".into();
+        assert!(matches!(
+            KlingGenerator::new(&creds).err(),
+            Some(AppError::Validation { .. })
+        ));
+
+        let mut creds = credentials();
+        creds.api_key = String::new();
+        assert!(matches!(
+            KlingGenerator::new(&creds).err(),
+            Some(AppError::Auth(_))
+        ));
+    }
+
+    #[test]
+    fn business_code_is_checked_against_http_200() {
+        let generator = KlingGenerator::new(&credentials()).unwrap();
+        assert!(generator.check_code(&json!({ "code": 0 })).is_ok());
+
+        let error = generator
+            .check_code(&json!({ "code": 1101, "message": "账户余额不足" }))
+            .unwrap_err();
+        assert_eq!(error.code(), "provider");
+        assert!(error.to_string().contains("1101"));
+    }
+
+    #[tokio::test]
+    async fn malformed_handle_is_rejected_before_any_request() {
+        let generator = KlingGenerator::new(&credentials()).unwrap();
+        let error = generator.poll("没有冒号").await.unwrap_err();
+        assert_eq!(error.code(), "provider");
     }
 }

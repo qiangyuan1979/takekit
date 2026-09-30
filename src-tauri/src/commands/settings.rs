@@ -158,6 +158,15 @@ pub(crate) fn load_image_config(app: &AppHandle) -> AppResult<ProviderConfig> {
     Ok(settings.image)
 }
 
+/// 取当前视频接入配置（含密钥库里的 api_key），供视频适配器建 generator。
+pub(crate) fn load_video_config(app: &AppHandle) -> AppResult<ProviderConfig> {
+    let data = app_data_dir(app)?;
+    let mut settings = read_settings(&data)?;
+    let secrets = SecretStore::new(&data);
+    settings.video.api_key = secrets.get(&api_key_key("video"))?.unwrap_or_default();
+    Ok(settings.video)
+}
+
 /// 读 `settings.json`；缺失或损坏时回落默认值（不阻塞启动）。
 fn read_settings(app_data_dir: &Path) -> AppResult<AppSettings> {
     let path = settings_file(app_data_dir);

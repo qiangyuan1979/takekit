@@ -108,7 +108,7 @@ impl GenerateImageArgs {
 }
 
 /// 本地图片字节 → data URL。
-fn data_url(mime: &str, bytes: &[u8]) -> String {
+pub(crate) fn data_url(mime: &str, bytes: &[u8]) -> String {
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     format!("data:{mime};base64,{encoded}")
 }
@@ -231,7 +231,7 @@ fn owner_dir(root: &Path, kind: AssetKind, owner_id: &str) -> AppResult<PathBuf>
 }
 
 /// 绝对路径 → 项目相对路径（统一正斜杠，避免 Windows 反斜杠进数据）。
-fn to_relative(root: &Path, path: &Path) -> AppResult<String> {
+pub(crate) fn to_relative(root: &Path, path: &Path) -> AppResult<String> {
     let relative = path.strip_prefix(root).map_err(|_| AppError::Validation {
         field: "path".into(),
         detail: "path must live inside the project directory".into(),
@@ -276,7 +276,7 @@ fn image_ext(mime: &str) -> &'static str {
 }
 
 /// 扩展名 → mime，用于把本地参考图包成 data URL。
-fn mime_for_ext(ext: &str) -> &'static str {
+pub(crate) fn mime_for_ext(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",

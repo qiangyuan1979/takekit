@@ -5,7 +5,7 @@
  * 但面板只显示"将在后续里程碑提供"。
  */
 
-import { pendingKeyframeIssues } from "../lib/frameOps";
+import { pendingKeyframeIssues, shotOptionLabel } from "../lib/frameOps";
 import { shotsWithoutPrompt } from "../lib/promptOps";
 import type { Meta, Project } from "../lib/types";
 import { undefinedCharacterRefs } from "../lib/scriptOps";
@@ -82,7 +82,7 @@ export const STEPS: readonly StepDef[] = [
     label: "生成",
     goal: "批量提交生成任务，按「镜号_版本」归档片段并择优",
     tip: "一次提交太多不好挑，建议按场分批",
-    ready: false,
+    ready: true,
   },
   {
     id: "post",
@@ -210,8 +210,29 @@ function checkPrompt(project: Project): GuardResult {
 }
 
 /**
+ * 第 7 步验收：每一镜都得采用一条片段，否则第 8 步后期无片可剪。
+ *
+ * 只卡"采没采用"这一件事：候选有几条、是不是本地模拟产物都不阻塞——
+ * 新手常常先拿模拟产物跑通全流程，再换成真机生成。
+ */
+function checkGenerate(project: Project): GuardResult {
+  const issues: string[] = [];
+  for (const episode of project.episodes) {
+    for (const scene of episode.scenes) {
+      for (const shot of scene.shots) {
+        if (!shot.adoptedClipId) issues.push(shotOptionLabel(episode, scene, shot));
+      }
+    }
+  }
+  if (issues.length === 0) return { ok: true, issues: [] };
+  const shown = issues.slice(0, 5).join("、");
+  const more = issues.length > 5 ? ` 等 ${issues.length} 镜` : "";
+  return { ok: false, issues: [`这些镜头还没采用片段：${shown}${more}`] };
+}
+
+/**
  * 进入下一步前的阻塞检查。尚未实现的环节一律放行，
- * 待各自的里程碑补齐校验规则（M7 生成……）。
+ * 待各自的里程碑补齐校验规则（v1.5 后期……）。
  */
 export function checkStep(step: StepId, project: Project | null): GuardResult {
   if (!project) return { ok: false, issues: ["还没有新建或打开项目"] };
@@ -228,6 +249,8 @@ export function checkStep(step: StepId, project: Project | null): GuardResult {
       return checkKeyframes(project);
     case "prompt":
       return checkPrompt(project);
+    case "generate":
+      return checkGenerate(project);
     default:
       return { ok: true, issues: [] };
   }

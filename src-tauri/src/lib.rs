@@ -11,6 +11,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(commands::generate::CancelRegistry::default())
         .invoke_handler(tauri::generate_handler![
             commands::project::create_project,
             commands::project::open_project,
@@ -30,6 +31,9 @@ pub fn run() {
             commands::export::export_handover_pack,
             commands::prompt::list_video_providers,
             commands::prompt::translate_video_request,
+            commands::generate::list_video_generators,
+            commands::generate::generate_clips,
+            commands::generate::cancel_clip_tasks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,6 +2,7 @@
 
 pub mod asset;
 pub mod export;
+pub mod generate;
 pub mod llm;
 pub mod project;
 pub mod prompt;

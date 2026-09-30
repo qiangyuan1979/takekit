@@ -10,14 +10,21 @@
 //! - 可灵没有负向提示词以外的空闲字段，方舟把分辨率编码进指令串；
 //! - 方舟支持固定种子（可灵不支持）。
 //!
-//! 本文件只做翻译（M6）；真正的 HTTP 调用在 M7 加。
+//! 本文件有两层：`translate`（M6 纯函数）产出请求体，[`JimengVideoGenerator`]（M7）
+//! 负责真正发请求。
 
 use super::{
-    non_empty, truncate_prompt, Translated, VideoProvider, VideoRequest, DEFAULT_DURATION_MS,
-    DEFAULT_MOTION_STRENGTH,
+    build_client, download_video, non_empty, provider_error, request_json, truncate_prompt, Polled,
+    Submitted, Translated, VideoCredentials, VideoGenerator, VideoOutput, VideoProvider,
+    VideoRequest, VideoStatus, DEFAULT_DURATION_MS, DEFAULT_MOTION_STRENGTH,
 };
+use crate::adapters::{classify_status, classify_transport};
+use crate::error::{AppError, AppResult};
 use crate::project::VideoParams;
-use serde_json::json;
+use futures_util::future::BoxFuture;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::time::Duration;
 
 /// 适配器标识（与图片适配器同名，业务上都叫"即梦"）。
 pub const NAME: &str = "jimeng";
@@ -186,6 +193,171 @@ fn dropped_params(params: &VideoParams, ref_count: usize) -> Vec<String> {
     notes
 }
 
+// ---------- 生成侧实现（M7） ----------
+
+/// 方舟任务端点：提交 / 查询 / 取消共用同一个前缀。
+const TASKS_PATH: &str = "/contents/generations/tasks";
+
+/// 即梦（方舟 Seedance）视频生成器。
+///
+/// 与可灵的差异在这里最直观：方舟是多段式 REST（提交拿顶层 `id`、查询看 `status`、
+/// 取消走 `DELETE`），且**同一份 body 三处复用**，故复用 [`JimengVideoProvider::translate`]。
+pub struct JimengVideoGenerator {
+    client: Client,
+    /// 已拼好的任务端点（`{base}/contents/generations/tasks`）。
+    endpoint: String,
+    api_key: String,
+    provider: JimengVideoProvider,
+    timeout: Duration,
+}
+
+impl JimengVideoGenerator {
+    /// 构造生成器；配置缺失在第一处就明确报错，而不是等到发请求。
+    pub fn new(credentials: &VideoCredentials) -> AppResult<Self> {
+        let base = credentials.base_url.trim();
+        if base.is_empty() {
+            return Err(AppError::Validation {
+                field: "baseUrl".into(),
+                detail: "video base URL is required".into(),
+            });
+        }
+        if credentials.api_key.trim().is_empty() {
+            return Err(AppError::Auth("video API key is not configured".into()));
+        }
+        Ok(Self {
+            client: build_client()?,
+            endpoint: format!("{}{TASKS_PATH}", base.trim_end_matches('/')),
+            api_key: credentials.api_key.trim().to_string(),
+            provider: JimengVideoProvider::new(&credentials.model),
+            timeout: credentials.timeout,
+        })
+    }
+
+    /// 提交阶段的失败信息在顶层 `error` 字段里。
+    fn check_error(&self, value: &Value) -> AppResult<()> {
+        match value.get("error") {
+            Some(error) if !error.is_null() => Err(provider_error(NAME, &error.to_string())),
+            _ => Ok(()),
+        }
+    }
+
+    /// 拼任务 URL（查询与取消共用）。
+    fn task_url(&self, handle: &str) -> String {
+        format!("{}/{handle}", self.endpoint)
+    }
+}
+
+impl VideoGenerator for JimengVideoGenerator {
+    fn name(&self) -> &'static str {
+        NAME
+    }
+
+    fn submit<'a>(&'a self, request: &'a VideoRequest) -> BoxFuture<'a, AppResult<Submitted>> {
+        Box::pin(async move {
+            let body = self.provider.translate(request).body;
+            let value = request_json(NAME, || {
+                self.client
+                    .post(&self.endpoint)
+                    .bearer_auth(&self.api_key)
+                    .timeout(self.timeout)
+                    .json(&body)
+            })
+            .await?;
+            self.check_error(&value)?;
+
+            // 方舟的创建响应把任务 id 放在**顶层** `id`（不像可灵嵌在 data 里）。
+            let task_id = value
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .ok_or_else(|| provider_error(NAME, "submit response has no task id"))?;
+            Ok(Submitted {
+                task_id: task_id.to_string(),
+                handle: task_id.to_string(),
+            })
+        })
+    }
+
+    fn poll<'a>(&'a self, handle: &'a str) -> BoxFuture<'a, AppResult<Polled>> {
+        Box::pin(async move {
+            let url = self.task_url(handle);
+            let value = request_json(NAME, || {
+                self.client
+                    .get(&url)
+                    .bearer_auth(&self.api_key)
+                    .timeout(self.timeout)
+            })
+            .await?;
+
+            // 这里**不**调 `check_error`：任务失败恰恰要靠 `error` 字段把原因带给用户，
+            // 若在此处直接返回 Err，就丢掉了「已失败」这个状态本身。
+            let raw = value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let status = parse_status(raw)?;
+            let error = value
+                .get("error")
+                .filter(|v| !v.is_null())
+                .map(|v| v.to_string());
+            let video_url = value
+                .pointer("/content/video_url")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+
+            Ok(Polled {
+                status,
+                video_url,
+                error,
+            })
+        })
+    }
+
+    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, AppResult<VideoOutput>> {
+        Box::pin(async move { download_video(&self.client, NAME, url, self.timeout).await })
+    }
+
+    /// 方舟支持取消（`DELETE .../tasks/{id}`）；任务已不存在时等价于取消成功。
+    ///
+    /// 这里**不**走 `send_with_retry`：取消不需要重试，且 404 是预期结果之一。
+    fn cancel<'a>(&'a self, handle: &'a str) -> BoxFuture<'a, AppResult<()>> {
+        Box::pin(async move {
+            let response = self
+                .client
+                .delete(self.task_url(handle))
+                .bearer_auth(&self.api_key)
+                .timeout(self.timeout)
+                .send()
+                .await
+                .map_err(|e| classify_transport(NAME, &e))?;
+            if response.status().is_success() || response.status().as_u16() == 404 {
+                return Ok(());
+            }
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            Err(classify_status(NAME, status.as_u16(), &text))
+        })
+    }
+}
+
+/// 方舟任务状态 → 归一化状态。
+fn parse_status(raw: &str) -> AppResult<VideoStatus> {
+    Ok(match raw {
+        "queued" => VideoStatus::Queued,
+        "running" => VideoStatus::Running,
+        "succeeded" => VideoStatus::Succeeded,
+        "failed" => VideoStatus::Failed,
+        // 方舟文档写 `cancelled`，个别返回写 `canceled`，两种都收。
+        "cancelled" | "canceled" => VideoStatus::Canceled,
+        other => {
+            return Err(provider_error(
+                NAME,
+                &format!("unknown task status `{other}`"),
+            ))
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +485,54 @@ mod tests {
         let out = provider.translate(&request(params));
         assert!(text_of(&out.body).contains("--resolution 1080p"));
         assert_eq!(out.notes.len(), 1);
+    }
+
+    fn credentials() -> VideoCredentials {
+        VideoCredentials {
+            base_url: "https://ark.example.com/api/v3".into(),
+            api_key: "sk-test".into(),
+            model: String::new(),
+            timeout: Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn generator_requires_base_url_and_key() {
+        let mut creds = credentials();
+        creds.base_url = "  ".into();
+        assert!(matches!(
+            JimengVideoGenerator::new(&creds).err(),
+            Some(AppError::Validation { .. })
+        ));
+
+        let mut creds = credentials();
+        creds.api_key = String::new();
+        assert!(matches!(
+            JimengVideoGenerator::new(&creds).err(),
+            Some(AppError::Auth(_))
+        ));
+    }
+
+    #[test]
+    fn status_strings_map_to_normalized_states() {
+        assert_eq!(parse_status("queued").unwrap(), VideoStatus::Queued);
+        assert_eq!(parse_status("running").unwrap(), VideoStatus::Running);
+        assert_eq!(parse_status("succeeded").unwrap(), VideoStatus::Succeeded);
+        assert_eq!(parse_status("failed").unwrap(), VideoStatus::Failed);
+        assert_eq!(parse_status("cancelled").unwrap(), VideoStatus::Canceled);
+        assert_eq!(parse_status("canceled").unwrap(), VideoStatus::Canceled);
+        assert_eq!(parse_status("莫名其妙").unwrap_err().code(), "provider");
+    }
+
+    #[test]
+    fn top_level_error_is_reported_on_submit() {
+        let generator = JimengVideoGenerator::new(&credentials()).unwrap();
+        assert!(generator.check_error(&json!({ "id": "task-1" })).is_ok());
+
+        let error = generator
+            .check_error(&json!({ "error": { "code": "InvalidParameter", "message": "bad" } }))
+            .unwrap_err();
+        assert_eq!(error.code(), "provider");
+        assert!(error.to_string().contains("InvalidParameter"));
     }
 }

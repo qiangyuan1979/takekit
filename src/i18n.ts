@@ -21,6 +21,8 @@ const ERROR_TEMPLATES: Record<string, string> = {
   timeout: "等待模型响应超时：{detail}",
   rate_limit: "请求太频繁，被服务商限流：{detail}",
   internal: "内部错误：{detail}",
+  /** 合成码（非 Rust 产出）：上次退出时还在排队的任务，重启后被标记为中断。 */
+  interrupted: "上次生成没跑完就中断了，可以一键重试。",
   unknown: "{message}",
 };
 

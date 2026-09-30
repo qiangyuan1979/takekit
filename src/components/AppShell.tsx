@@ -12,6 +12,7 @@ import { checkStep, stepById, STEPS, type StepId } from "../state/steps";
 import { useAppStore } from "../state/store";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { AssetsWorkspace } from "./assets/AssetsWorkspace";
+import { GenerateWorkspace } from "./generate/GenerateWorkspace";
 import { KeyframesWorkspace } from "./keyframes/KeyframesWorkspace";
 import { ProjectPanel } from "./panels/ProjectPanel";
 import { PromptsWorkspace } from "./prompts/PromptsWorkspace";
@@ -211,6 +212,8 @@ export function AppShell() {
                 <KeyframesWorkspace />
               ) : step.id === "prompt" ? (
                 <PromptsWorkspace />
+              ) : step.id === "generate" ? (
+                <GenerateWorkspace />
               ) : (
                 <StepPlaceholder stepId={step.id} />
               )}

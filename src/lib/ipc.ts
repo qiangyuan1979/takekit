@@ -9,13 +9,15 @@ import type {
   AppSettings,
   AssetKind,
   ExportRecord,
+  GenerateEvent,
+  GenerateJob,
   LlmChunk,
   LlmRequest,
   LlmResponse,
   LoadedProject,
   Project,
   RecentProject,
-  VideoParams,
+  VideoRequest,
 } from "./types";
 
 /** 与 Rust `AppError` 的序列化形状一致。 */
@@ -44,12 +46,6 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   } catch (error) {
     throw toApiError(error);
   }
-}
-
-/** 统一视频请求：拼好的提示词 + 参数，交给后端适配器翻译。 */
-export interface VideoRequest {
-  prompt: string;
-  params: VideoParams;
 }
 
 /** 适配器翻译结果：provider 名、厂商请求体、翻译过程中的降级说明。 */
@@ -155,4 +151,32 @@ export const api = {
   /** 导出交接包到目录；返回目录、导出记录与包内文件清单。 */
   exportHandoverPack: (projectPath: string, project: Project, destDir: string) =>
     call<HandoverOutcome>("export_handover_pack", { projectPath, project, destDir }),
+
+  // ---- 生成（M7） ----
+
+  /** 可用生成器：`kling` / `jimeng` / `mock`（本地模拟，无 Key 也能跑通全流程）。 */
+  listVideoGenerators: () => call<string[]>("list_video_generators"),
+
+  /**
+   * 跑一批生成任务：每个状态变化回调 `onEvent`，全部结束才 resolve。
+   * 返回值是终态快照（与 `jobs` 同序），用来兜住漏收的事件。
+   */
+  generateClips: async (
+    projectPath: string,
+    provider: string,
+    jobs: GenerateJob[],
+    onEvent: (event: GenerateEvent) => void,
+  ): Promise<GenerateEvent[]> => {
+    const channel = new Channel<GenerateEvent>();
+    channel.onmessage = onEvent;
+    return call<GenerateEvent[]>("generate_clips", {
+      projectPath,
+      provider,
+      jobs,
+      onEvent: channel,
+    });
+  },
+
+  /** 请求取消若干任务（软取消：下一轮轮询时收尾）；返回登记数量。 */
+  cancelClipTasks: (taskIds: string[]) => call<number>("cancel_clip_tasks", { taskIds }),
 };

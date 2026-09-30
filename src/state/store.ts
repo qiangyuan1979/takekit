@@ -17,6 +17,7 @@ import {
   setFrameRefShot as assignRefShot,
   updateFrame,
 } from "../lib/frameOps";
+import { applyGenerateEvent, interruptedTasks, markInterrupted } from "../lib/generateOps";
 import { api, toApiError, type ApiError } from "../lib/ipc";
 import {
   makeEpisode,
@@ -42,6 +43,7 @@ import {
   type Episode,
   type ExportRecord,
   type FrameRole,
+  type GenerateEvent,
   type Meta,
   type Project,
   type PromptBundle,
@@ -52,6 +54,7 @@ import {
   type Script,
   type Shot,
   type StyleLock,
+  type Task,
 } from "../lib/types";
 import type { StepId } from "./steps";
 
@@ -313,6 +316,20 @@ export interface AppState {
   addExportRecord: (record: ExportRecord) => void;
   /** 分镜表导入返回覆盖后的项目：整体替换（导入是"以文件为准"的显式操作）。 */
   applyStoryboardImport: (project: Project) => void;
+
+  // ---- 生成（M7） ----
+
+  /** 提交前先把这批任务落一条排队记录，随后的进度事件才有对象可写。 */
+  addTasks: (tasks: Task[]) => void;
+  /** 进度事件写回：按 `taskId` 找到任务，更新状态与产物。 */
+  applyTaskEvent: (event: GenerateEvent) => void;
+  /** 采用某条片段（传 `null` 即取消采用）。 */
+  adoptClip: (episodeId: string, sceneId: string, shotId: string, clipId: string | null) => void;
+  /**
+   * 清理上次退出遗留的"生成中"任务（落成"已中断"），返回清洗条数。
+   * 打开项目后调用：进程重启后队列已经没了，不清洗就会永远卡在进度里。
+   */
+  markInterruptedTasks: () => number;
 }
 
 export const useAppStore = create<AppState>()((set, get) => {
@@ -375,6 +392,8 @@ export const useAppStore = create<AppState>()((set, get) => {
           error: null,
           recent: await fetchRecent(),
         });
+        // 上次退出时还在排队的任务，这一次开工不会再有人推进它们。
+        get().markInterruptedTasks();
         return true;
       } catch (error) {
         set({ error: toApiError(error) });
@@ -833,5 +852,35 @@ export const useAppStore = create<AppState>()((set, get) => {
       mutate((project) => ({ ...project, exports: [...project.exports, record] })),
 
     applyStoryboardImport: (imported) => mutate(() => imported),
+
+    // ---- 生成（M7） ----
+
+    addTasks: (tasks) => {
+      if (tasks.length === 0) return;
+      mutate((project) => ({ ...project, tasks: [...project.tasks, ...tasks] }));
+    },
+
+    applyTaskEvent: (event) =>
+      mutate((project) => {
+        const tasks = applyGenerateEvent(project.tasks, event);
+        // 事件对应的任务已被删：不制造无意义的脏标记。
+        return tasks === project.tasks ? project : { ...project, tasks };
+      }),
+
+    adoptClip: (episodeId, sceneId, shotId, clipId) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) =>
+          shot.adoptedClipId === clipId ? shot : { ...shot, adoptedClipId: clipId },
+        ),
+      ),
+
+    markInterruptedTasks: () => {
+      const { project } = get();
+      if (!project) return 0;
+      const count = interruptedTasks(project.tasks).length;
+      if (count === 0) return 0;
+      mutate((current) => ({ ...current, tasks: markInterrupted(current.tasks) }));
+      return count;
+    },
   };
 });
