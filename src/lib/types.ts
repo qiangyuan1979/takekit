@@ -276,7 +276,7 @@ export interface Assets {
  * 资产类别，字面量与 Rust `commands/asset.rs` 的 `AssetKind`
  * （`#[serde(rename_all = "snake_case")]`）一致，直接当 IPC 参数用。
  */
-export type AssetKind = "character" | "scene" | "prop" | "style";
+export type AssetKind = "character" | "scene" | "prop" | "style" | "frame";
 
 // ---------- 任务 / 模板引用 / 导出记录 ----------
 

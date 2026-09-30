@@ -8,6 +8,15 @@
 
 import { create } from "zustand";
 import { makeCharacter, makeProp, makeSceneAsset } from "../lib/assetOps";
+import {
+  addCandidates as appendCandidates,
+  adoptCandidate,
+  detachCandidate,
+  ensureFrame,
+  frameByRole,
+  setFrameRefShot as assignRefShot,
+  updateFrame,
+} from "../lib/frameOps";
 import { api, toApiError, type ApiError } from "../lib/ipc";
 import {
   makeEpisode,
@@ -31,6 +40,7 @@ import {
   type AssetKind,
   type Character,
   type Episode,
+  type FrameRole,
   type Meta,
   type Project,
   type Prop,
@@ -142,6 +152,19 @@ function replaceSceneShots(
   };
 }
 
+/** 定位到某个镜头并替换它：帧的增删改都经过这里，避免一路 map 嵌套。 */
+function replaceShot(
+  project: Project,
+  episodeId: string,
+  sceneId: string,
+  shotId: string,
+  change: (shot: Shot) => Shot,
+): Project {
+  return replaceSceneShots(project, episodeId, sceneId, (shots) =>
+    shots.map((shot) => (shot.id === shotId ? change(shot) : shot)),
+  );
+}
+
 export interface AppState {
   /** 首次启动的初始化是否完成（设置 + 最近项目）。 */
   ready: boolean;
@@ -230,6 +253,43 @@ export interface AppState {
   moveShot: (episodeId: string, sceneId: string, shotId: string, delta: number) => void;
   /** 跨场批量改：表格视图里勾选多镜后统一设置景别 / 运镜 / 时长。 */
   updateManyShots: (episodeId: string, shotIds: string[], patch: Partial<Shot>) => void;
+
+  // ---- 关键帧（M5） ----
+
+  /** 补建某个角色的帧（首帧必需、尾帧按需）；已有则原样不动。 */
+  ensureShotFrame: (episodeId: string, sceneId: string, shotId: string, role: FrameRole) => void;
+  /** 候选图落盘后写回：追加去重（与资产图一样，先落盘再引用）。 */
+  addFrameCandidates: (
+    episodeId: string,
+    sceneId: string,
+    shotId: string,
+    role: FrameRole,
+    paths: string[],
+  ) => void;
+  /** 把某张候选定为该帧的定稿。 */
+  adoptFrame: (
+    episodeId: string,
+    sceneId: string,
+    shotId: string,
+    role: FrameRole,
+    path: string,
+  ) => void;
+  /** 摘掉一张候选；它正好是定稿时，定稿一并清空。 */
+  detachFrameCandidate: (
+    episodeId: string,
+    sceneId: string,
+    shotId: string,
+    role: FrameRole,
+    path: string,
+  ) => void;
+  /** 设置 / 解除跨镜参考（存被引用镜头的 id）。 */
+  setFrameRefShot: (
+    episodeId: string,
+    sceneId: string,
+    shotId: string,
+    role: FrameRole,
+    refShotId: string | null,
+  ) => void;
 }
 
 export const useAppStore = create<AppState>()((set, get) => {
@@ -587,6 +647,9 @@ export const useAppStore = create<AppState>()((set, get) => {
               ...styleLock,
               refImages: [...styleLock.refImages, ...paths],
             }));
+          case "frame":
+            // 关键帧候选存在 `shot.frames[role].candidates` 里，不走资产写回。
+            return project;
         }
       });
     },
@@ -618,6 +681,9 @@ export const useAppStore = create<AppState>()((set, get) => {
               ...styleLock,
               refImages: styleLock.refImages.filter((item) => item !== path),
             }));
+          case "frame":
+            // 同 `attachAssetImages`：关键帧候选不在资产里。
+            return project;
         }
       }),
 
@@ -681,5 +747,45 @@ export const useAppStore = create<AppState>()((set, get) => {
           ),
         };
       }),
+
+    // ---- 关键帧（M5） ----
+
+    ensureShotFrame: (episodeId, sceneId, shotId, role) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) => ensureFrame(shot, role)),
+      ),
+
+    addFrameCandidates: (episodeId, sceneId, shotId, role, paths) => {
+      if (paths.length === 0) return;
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) =>
+          updateFrame(shot, role, (frame) => appendCandidates(frame, paths)),
+        ),
+      );
+    },
+
+    adoptFrame: (episodeId, sceneId, shotId, role, path) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) =>
+          updateFrame(shot, role, (frame) => adoptCandidate(frame, path)),
+        ),
+      ),
+
+    detachFrameCandidate: (episodeId, sceneId, shotId, role, path) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) =>
+          // 帧还不存在时不动手，避免"摘一张不存在的图"顺手建出一个空帧。
+          frameByRole(shot, role)
+            ? updateFrame(shot, role, (frame) => detachCandidate(frame, path))
+            : shot,
+        ),
+      ),
+
+    setFrameRefShot: (episodeId, sceneId, shotId, role, refShotId) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) =>
+          updateFrame(shot, role, (frame) => assignRefShot(frame, refShotId)),
+        ),
+      ),
   };
 });

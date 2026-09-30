@@ -12,6 +12,7 @@ import {
   clampDurationMs,
 } from "../../lib/shotOps";
 import type { Character, Episode } from "../../lib/types";
+import { removeShotWithFrames } from "../../state/keyframes";
 import { useAppStore } from "../../state/store";
 import { Select, TextArea, TextInput } from "../controls";
 import { FieldRow } from "../FieldRow";
@@ -25,7 +26,6 @@ export interface ShotCardViewProps {
 export function ShotCardView({ episode, characters }: ShotCardViewProps) {
   const addShot = useAppStore((state) => state.addShot);
   const updateShot = useAppStore((state) => state.updateShot);
-  const removeShot = useAppStore((state) => state.removeShot);
   const moveShot = useAppStore((state) => state.moveShot);
 
   const patch = (sceneId: string, shotId: string, next: Parameters<typeof updateShot>[3]): void =>
@@ -71,7 +71,7 @@ export function ShotCardView({ episode, characters }: ShotCardViewProps) {
                     type="button"
                     className="icon-btn icon-btn--danger"
                     title="删除这一镜"
-                    onClick={() => removeShot(episode.id, scene.id, shot.id)}
+                    onClick={() => void removeShotWithFrames(episode.id, scene.id, shot.id)}
                   >
                     删除
                   </button>

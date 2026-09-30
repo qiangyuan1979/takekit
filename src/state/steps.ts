@@ -5,6 +5,7 @@
  * 但面板只显示"将在后续里程碑提供"。
  */
 
+import { pendingKeyframeIssues } from "../lib/frameOps";
 import type { Meta, Project } from "../lib/types";
 import { undefinedCharacterRefs } from "../lib/scriptOps";
 
@@ -64,7 +65,7 @@ export const STEPS: readonly StepDef[] = [
     label: "关键帧",
     goal: "每镜产出首帧（必需）与尾帧（可选），让画面可控而非纯抽卡",
     tip: "不指定跨镜参考，同场景连续镜头画面会跳",
-    ready: false,
+    ready: true,
   },
   {
     id: "prompt",
@@ -184,8 +185,18 @@ function checkStoryboard(project: Project): GuardResult {
 }
 
 /**
+ * 第 5 步验收：每一个镜头都得有定稿的首帧，否则第 6 步出题、第 7 步生成都无从谈起。
+ *
+ * 尾帧不卡：它是"让画面停在确定处"的可选手段，不是流程的必经环节。
+ */
+function checkKeyframes(project: Project): GuardResult {
+  const issues = pendingKeyframeIssues(project);
+  return { ok: issues.length === 0, issues };
+}
+
+/**
  * 进入下一步前的阻塞检查。尚未实现的环节一律放行，
- * 待各自的里程碑补齐校验规则（M5 关键帧……）。
+ * 待各自的里程碑补齐校验规则（M6 出题、M7 生成……）。
  */
 export function checkStep(step: StepId, project: Project | null): GuardResult {
   if (!project) return { ok: false, issues: ["还没有新建或打开项目"] };
@@ -198,6 +209,8 @@ export function checkStep(step: StepId, project: Project | null): GuardResult {
       return checkAssets(project);
     case "storyboard":
       return checkStoryboard(project);
+    case "keyframes":
+      return checkKeyframes(project);
     default:
       return { ok: true, issues: [] };
   }

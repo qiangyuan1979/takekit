@@ -42,6 +42,13 @@ futures-util = "0.3"
 base64 = "0.22"
 # 重试退避需要异步 sleep；Tauri 本身就跑在 tokio 上，不额外引入运行时。
 tokio = { version = "1", features = ["time"] }
+# M5 关键帧：厂商原生图生图只吃一张参考图，多张时在本地合成为一张「参考表」。
+# 只开解码所需格式，编码固定输出 PNG。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+] }
 
 [dev-dependencies]
 tempfile = "3"

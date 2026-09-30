@@ -17,6 +17,7 @@ import {
   toShotSize,
 } from "../../lib/shotOps";
 import type { Character, Episode } from "../../lib/types";
+import { removeShotWithFrames } from "../../state/keyframes";
 import { useAppStore } from "../../state/store";
 import { Select, TextInput } from "../controls";
 import { CharacterPicker } from "./CharacterPicker";
@@ -31,7 +32,6 @@ export interface ShotTableViewProps {
 
 export function ShotTableView({ episode, characters }: ShotTableViewProps) {
   const updateShot = useAppStore((state) => state.updateShot);
-  const removeShot = useAppStore((state) => state.removeShot);
   const moveShot = useAppStore((state) => state.moveShot);
   const updateManyShots = useAppStore((state) => state.updateManyShots);
 
@@ -258,7 +258,7 @@ export function ShotTableView({ episode, characters }: ShotTableViewProps) {
                       type="button"
                       className="icon-btn icon-btn--danger"
                       title="删除这一镜"
-                      onClick={() => removeShot(episode.id, scene.id, shot.id)}
+                      onClick={() => void removeShotWithFrames(episode.id, scene.id, shot.id)}
                     >
                       删除
                     </button>

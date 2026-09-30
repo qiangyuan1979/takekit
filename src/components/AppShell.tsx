@@ -12,6 +12,7 @@ import { checkStep, stepById, STEPS, type StepId } from "../state/steps";
 import { useAppStore } from "../state/store";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { AssetsWorkspace } from "./assets/AssetsWorkspace";
+import { KeyframesWorkspace } from "./keyframes/KeyframesWorkspace";
 import { ProjectPanel } from "./panels/ProjectPanel";
 import { ScriptWorkspace } from "./script/ScriptWorkspace";
 import { SettingsPanel } from "./SettingsPanel";
@@ -205,6 +206,8 @@ export function AppShell() {
                 <AssetsWorkspace />
               ) : step.id === "storyboard" ? (
                 <StoryboardWorkspace />
+              ) : step.id === "keyframes" ? (
+                <KeyframesWorkspace />
               ) : (
                 <StepPlaceholder stepId={step.id} />
               )}

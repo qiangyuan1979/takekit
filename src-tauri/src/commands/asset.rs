@@ -1,16 +1,17 @@
 //! 资产命令：参考图导入 / 候选图生成落盘 / 删除清理（spec §5.3、§8）。
 //!
 //! 约定两条，目的是让项目目录可以整体搬家：
-//! 1. 图片一律落在 `<项目根>/assets/{characters,scenes,props,style}/<ownerId>/`；
+//! 1. 图片一律落在 `<项目根>/assets/{characters,scenes,props,style,frames}/<ownerId>/`；
 //! 2. `project.json` 里只存**项目相对路径**（正斜杠），绝不存绝对路径。
 //!
 //! 适配器不碰文件系统（spec §9.2）：本地参考图在这里读出来编码成 data URL 再交出去，
-//! 生成结果在这里落盘。
+//! 生成结果在这里落盘。多张参考图也在这一层合成为一张参考表（见 `refsheet`）。
 
 use crate::adapters::image::{jimeng, ImageProvider, ImageRequest};
 use crate::commands::project::resolve_project_path;
 use crate::commands::settings::load_image_config;
 use crate::error::{AppError, AppResult};
+use crate::refsheet;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -24,7 +25,8 @@ const IMAGE_TIMEOUT: Duration = Duration::from_secs(300);
 /// 允许导入的图片扩展名（小写）。
 const ALLOWED_EXTS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 
-/// 资产类别 → 项目内的图片子目录。
+/// 类别 → 项目内的图片子目录。`Frame` 的 owner 是**镜头 id**（`assets/frames/<shotId>`），
+/// 这样关键帧的候选图与资产图共用同一套导入 / 生成 / 清理通路。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
@@ -32,6 +34,7 @@ pub enum AssetKind {
     Scene,
     Prop,
     Style,
+    Frame,
 }
 
 impl AssetKind {
@@ -42,6 +45,7 @@ impl AssetKind {
             AssetKind::Scene => "assets/scenes",
             AssetKind::Prop => "assets/props",
             AssetKind::Style => "assets/style",
+            AssetKind::Frame => "assets/frames",
         }
     }
 }
@@ -62,8 +66,11 @@ pub struct GenerateImageArgs {
 
 impl GenerateImageArgs {
     /// 把本地参考图读成 data URL，适配器因此无需知道项目目录在哪。
+    ///
+    /// 厂商原生图生图只接受一张参考图（`jimeng` 取 `ref_images.first()`），所以多张时
+    /// 先用 `refsheet` 拼成一张「参考表」；分区含义由前端写进提示词（跨端约定）。
     fn into_provider_request(self, root: &Path) -> AppResult<ImageRequest> {
-        let mut ref_images = Vec::with_capacity(self.ref_images.len());
+        let mut loaded = Vec::with_capacity(self.ref_images.len());
         for relative in &self.ref_images {
             let path = resolve_relative(root, relative)?;
             let bytes = fs::read(&path).map_err(|e| match e.kind() {
@@ -72,10 +79,21 @@ impl GenerateImageArgs {
                 },
                 _ => AppError::Io(e),
             })?;
-            let mime = mime_for_ext(&extension_of(&path));
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            ref_images.push(format!("data:{mime};base64,{encoded}"));
+            loaded.push((mime_for_ext(&extension_of(&path)), bytes));
         }
+
+        let ref_images = match loaded.len() {
+            0 => Vec::new(),
+            1 => {
+                let (mime, bytes) = &loaded[0];
+                vec![data_url(mime, bytes)]
+            }
+            _ => {
+                let raw: Vec<Vec<u8>> = loaded.into_iter().map(|(_, bytes)| bytes).collect();
+                let sheet = refsheet::compose(&raw, self.width, self.height)?;
+                vec![data_url("image/png", &sheet)]
+            }
+        };
 
         Ok(ImageRequest {
             prompt: self.prompt,
@@ -87,6 +105,12 @@ impl GenerateImageArgs {
             ref_images,
         })
     }
+}
+
+/// 本地图片字节 → data URL。
+fn data_url(mime: &str, bytes: &[u8]) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{mime};base64,{encoded}")
 }
 
 /// 导入一张本地参考图到资产目录，返回项目相对路径。
@@ -337,6 +361,17 @@ mod tests {
     }
 
     #[test]
+    fn frame_kind_is_owned_by_the_shot() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        // 镜头 id 形如 `shot-<uuid>`，天然是合法 owner id。
+        assert_eq!(
+            owner_dir(root, AssetKind::Frame, "shot-9f3c").unwrap(),
+            root.join("assets/frames/shot-9f3c")
+        );
+    }
+
+    #[test]
     fn extension_and_mime_map_to_each_other() {
         assert_eq!(image_ext("image/jpeg"), "jpg");
         assert_eq!(image_ext("image/webp"), "webp");
@@ -425,5 +460,85 @@ mod tests {
         assert!(!resolve_relative(root, &relative).unwrap().exists());
         // 目录已不在，再删一次仍应通过。
         delete_asset_dir(project_path, AssetKind::Scene, "s1".to_string()).unwrap();
+    }
+
+    /// 写一张真实可解码的 PNG——拼图路径必须走通解码，`png_header` 那点假字节不够。
+    fn write_solid_png(root: &Path, relative: &str, color: [u8; 3]) {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
+        use std::io::Cursor;
+
+        let path = resolve_relative(root, relative).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let image = ImageBuffer::<Rgb<u8>, _>::from_pixel(16, 16, Rgb(color));
+        let mut buffer = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(image)
+            .write_to(&mut buffer, ImageFormat::Png)
+            .unwrap();
+        fs::write(&path, buffer.into_inner()).unwrap();
+    }
+
+    fn args_with_refs(refs: Vec<String>, size: u32) -> GenerateImageArgs {
+        GenerateImageArgs {
+            prompt: "一行测试提示词".into(),
+            negative_prompt: None,
+            width: size,
+            height: size,
+            count: 1,
+            seed: None,
+            ref_images: refs,
+        }
+    }
+
+    #[test]
+    fn a_single_reference_is_passed_through_as_is() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_solid_png(root, "assets/frames/shot-1/ref-a.png", [255, 0, 0]);
+
+        let request = args_with_refs(vec!["assets/frames/shot-1/ref-a.png".to_string()], 512)
+            .into_provider_request(root)
+            .unwrap();
+
+        assert_eq!(request.ref_images.len(), 1);
+        assert!(request.ref_images[0].starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn multiple_references_become_one_composed_sheet() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        write_solid_png(root, "assets/frames/shot-1/ref-a.png", [255, 0, 0]);
+        write_solid_png(root, "assets/frames/shot-1/ref-b.png", [0, 0, 255]);
+
+        let request = args_with_refs(
+            vec![
+                "assets/frames/shot-1/ref-a.png".to_string(),
+                "assets/frames/shot-1/ref-b.png".to_string(),
+            ],
+            512,
+        )
+        .into_provider_request(root)
+        .unwrap();
+
+        // 厂商原生只吃一张：两张参考图必须已被合成成一张。
+        assert_eq!(request.ref_images.len(), 1);
+        let encoded = request.ref_images[0]
+            .strip_prefix("data:image/png;base64,")
+            .expect("合成结果应为 PNG");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let sheet = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((sheet.width(), sheet.height()), (512, 512));
+    }
+
+    #[test]
+    fn missing_reference_file_is_reported_as_not_found() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let error = args_with_refs(vec!["assets/frames/shot-1/nope.png".to_string()], 512)
+            .into_provider_request(root)
+            .unwrap_err();
+        assert_eq!(error.code(), "not_found");
     }
 }
