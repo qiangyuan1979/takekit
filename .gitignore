@@ -20,3 +20,6 @@ Thumbs.db
 .env
 .env.*
 src-tauri/.takekit-secrets*
+
+# 桌面端走查时在 src-tauri 下生成的项目数据（不入库）
+src-tauri/TakeKit项目-*/
