@@ -266,4 +266,24 @@ describe("<PromptsWorkspace /> · 导出与交接", () => {
     expect(ipc.api.exportHandoverPack).toHaveBeenCalledWith(PROJECT_PATH, before, "D:/handover");
     expect(screen.getByTestId("export-status").textContent).toContain("2 个文件");
   });
+
+  it("交接包缺关键帧时，导出失败并指出缺什么", async () => {
+    // 后端在导出前会做完整性校验：缺首帧就直接拒绝，而不是产出一个残包。
+    ipc.api.exportHandoverPack.mockRejectedValue({
+      code: "validation",
+      message: "缺少首帧：第 1 集 第 1 场 · 镜 1",
+      args: { field: "handover" },
+    });
+    dialog.open.mockResolvedValue("D:/handover");
+
+    render(<PromptsWorkspace />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "导出交接包" }));
+    await flush();
+
+    expect(screen.getByTestId("export-status").textContent).toContain("导出交接包失败");
+    expect(useAppStore.getState().error?.message).toContain("缺少首帧");
+    // 失败不登记导出记录，项目里不该多出一条假记录。
+    expect(useAppStore.getState().project!.exports).toEqual([]);
+  });
 });

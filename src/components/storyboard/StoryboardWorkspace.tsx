@@ -9,7 +9,14 @@
 import { useState } from "react";
 import { describeError } from "../../i18n";
 import { toApiError } from "../../lib/ipc";
-import { episodeShotCount } from "../../lib/shotOps";
+import { episodeShotCount, makeShot } from "../../lib/shotOps";
+import {
+  cameraSequenceFrom,
+  shotSeedsFrom,
+  shotSeedsPayload,
+  type ShotSeed,
+} from "../../lib/templateOps";
+import type { CameraMove } from "../../lib/types";
 import { useAppStore } from "../../state/store";
 import {
   runShotAi,
@@ -18,6 +25,7 @@ import {
   type SplitOptions,
 } from "../../state/storyboard";
 import { Select } from "../controls";
+import { TemplatePicker } from "../TemplatePicker";
 import { DurationBar } from "./DurationBar";
 import { ShotCardView } from "./ShotCardView";
 import { ShotTableView } from "./ShotTableView";
@@ -74,6 +82,27 @@ export function StoryboardWorkspace() {
   const clearScene = (sceneId: string): void => {
     setSceneShots(episode.id, sceneId, []);
     setStatus({ kind: "ok", text: "已清空这一场的镜头。" });
+  };
+
+  /** 分镜模板：追加而非覆盖，套错了删掉即可，不会毁掉已有镜头。 */
+  const appendShots = (sceneId: string, seeds: ShotSeed[]): void => {
+    const scene = episode.scenes.find((item) => item.id === sceneId);
+    if (!scene || seeds.length === 0) return;
+    const added = seeds.map((seed) => makeShot({ ...seed, episodeId: episode.id, sceneId }));
+    setSceneShots(episode.id, sceneId, [...scene.shots, ...added]);
+    setStatus({ kind: "ok", text: `已套用分镜模板，追加 ${added.length} 个镜头。` });
+  };
+
+  /** 运镜模板：只有序列、不删镜头，按序循环套到本场每一镜。 */
+  const applyCamera = (sceneId: string, moves: CameraMove[]): void => {
+    const scene = episode.scenes.find((item) => item.id === sceneId);
+    if (!scene || moves.length === 0) return;
+    setSceneShots(
+      episode.id,
+      sceneId,
+      scene.shots.map((shot, index) => ({ ...shot, cameraMove: moves[index % moves.length] })),
+    );
+    setStatus({ kind: "ok", text: `已套用运镜模板（${moves.length} 个运镜循环使用）。` });
   };
 
   const aiScene = async (sceneId: string): Promise<void> => {
@@ -155,6 +184,29 @@ export function StoryboardWorkspace() {
             </span>
             <span className="scenebar__count">{scene.shots.length} 镜</span>
             <div className="scenebar__actions">
+              <details className="scenebar__tpl">
+                <summary className="icon-btn" title="把模板套到这一场">
+                  套模板
+                </summary>
+                <div className="scenebar__tplbox">
+                  <TemplatePicker
+                    kind="storyboard"
+                    label="套用分镜骨架（追加镜头）"
+                    onApply={(payload) => appendShots(scene.id, shotSeedsFrom(payload))}
+                    capture={() => (scene.shots.length > 0 ? shotSeedsPayload(scene.shots) : null)}
+                  />
+                  <TemplatePicker
+                    kind="camera"
+                    label="套用运镜序列（按序循环）"
+                    onApply={(payload) => applyCamera(scene.id, cameraSequenceFrom(payload))}
+                    capture={() =>
+                      scene.shots.length > 0
+                        ? { moves: scene.shots.map((shot) => shot.cameraMove) }
+                        : null
+                    }
+                  />
+                </div>
+              </details>
               <button
                 type="button"
                 className="icon-btn"

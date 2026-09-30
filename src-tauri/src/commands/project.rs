@@ -89,20 +89,30 @@ pub fn list_recent_projects(app: AppHandle) -> AppResult<Vec<RecentProject>> {
         .collect())
 }
 
-/// 复制项目到同级目录，并重置 id / 名称 / 时间戳。
+/// 复制项目到 `parentDir/<newName>`，并重置 id / 名称 / 时间戳。
 #[tauri::command]
 pub fn duplicate_project(
     app: AppHandle,
     path: String,
+    parent_dir: String,
     new_name: String,
 ) -> AppResult<LoadedProject> {
     let (root, _file) = resolve_project_path(&path)?;
-    let (project, dest) = store::duplicate_project(&root, &new_name)?;
+    let (project, dest) = store::duplicate_project(&root, &PathBuf::from(&parent_dir), &new_name)?;
     remember(&app, &project, &dest)?;
     Ok(LoadedProject {
         project,
         path: dest.display().to_string(),
     })
+}
+
+/// 归档项目：只把它移出「最近打开」列表，磁盘上的项目文件原样保留。
+#[tauri::command]
+pub fn archive_project(app: AppHandle, path: String) -> AppResult<Vec<RecentProject>> {
+    let (root, _file) = resolve_project_path(&path)?;
+    let data = app_data_dir(&app)?;
+    fs::create_dir_all(&data)?;
+    store::remove_recent(&data, &root.display().to_string())
 }
 
 /// 记录到「最近项目」；失败不影响主流程（只在日志层面可见）。

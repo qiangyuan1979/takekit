@@ -15,8 +15,11 @@ import type {
   LlmRequest,
   LlmResponse,
   LoadedProject,
+  Material,
+  MaterialKind,
   Project,
   RecentProject,
+  Template,
   VideoRequest,
 } from "./types";
 
@@ -92,8 +95,11 @@ export const api = {
 
   listRecentProjects: () => call<RecentProject[]>("list_recent_projects"),
 
-  duplicateProject: (path: string, newName: string) =>
-    call<LoadedProject>("duplicate_project", { path, newName }),
+  duplicateProject: (path: string, parentDir: string, newName: string) =>
+    call<LoadedProject>("duplicate_project", { path, parentDir, newName }),
+
+  /** 归档：只把项目移出「最近打开」，磁盘上的文件不动。返回剩余列表。 */
+  archiveProject: (path: string) => call<RecentProject[]>("archive_project", { path }),
 
   getSettings: () => call<AppSettings>("get_settings"),
 
@@ -179,4 +185,27 @@ export const api = {
 
   /** 请求取消若干任务（软取消：下一轮轮询时收尾）；返回登记数量。 */
   cancelClipTasks: (taskIds: string[]) => call<number>("cancel_clip_tasks", { taskIds }),
+
+  // ---- 模板库（M8） ----
+
+  /** 全局模板库（应用数据目录，跨项目共享）；文件缺失或损坏时返回空表。 */
+  listTemplates: () => call<Template[]>("list_templates"),
+
+  /** 新增或按 id 覆盖一条模板，返回最新全量列表。 */
+  saveTemplate: (template: Template) => call<Template[]>("save_template", { template }),
+
+  /** 删除一条模板，返回最新全量列表。 */
+  deleteTemplate: (id: string) => call<Template[]>("delete_template", { id }),
+
+  // ---- 素材库（M8） ----
+
+  /** 全局素材库（应用数据目录，跨项目共享）；文件缺失或损坏时返回空表。 */
+  listMaterials: () => call<Material[]>("list_materials"),
+
+  /** 把本地文件复制进素材库，返回最新全量列表。 */
+  importMaterial: (kind: MaterialKind, sourcePath: string, name?: string) =>
+    call<Material[]>("import_material", { kind, sourcePath, name: name ?? null }),
+
+  /** 删除一条素材（连同实体文件），返回最新全量列表。 */
+  deleteMaterial: (id: string) => call<Material[]>("delete_material", { id }),
 };

@@ -21,6 +21,8 @@ export interface StepDef {
   goal: string;
   /** 常见错误。 */
   tip: string;
+  /** 示例：一句能照着模仿的样例，给完全没做过的新手一个模板。 */
+  example: string;
   /** 本版本是否已实现。 */
   ready: boolean;
   /** 灰态：可看见但不可进入（第 8 步后期，v1.5 提供）。 */
@@ -34,6 +36,7 @@ export const STEPS: readonly StepDef[] = [
     label: "立项",
     goal: "把模糊的喜好收敛成能传递给下游的硬参数",
     tip: "最容易漏的是目标受众与单集时长——它们决定后面每一镜的节奏",
+    example: "都市逆袭 · 女频 · 抖音 · 25-35 岁女性 · 9:16 · 60 秒/集 · 12 集",
     ready: true,
   },
   {
@@ -42,6 +45,7 @@ export const STEPS: readonly StepDef[] = [
     label: "剧本",
     goal: "把故事变成结构化的「场」：创意核 → 大纲 → 正文 → 一致性引用",
     tip: "别在这一步拆镜，拆镜是第 4 步的事",
+    example: "一句话：送外卖的林默接到医院催款电话。第 1 集第 1 场：出租屋、房东堵门催租。",
     ready: true,
   },
   {
@@ -50,6 +54,7 @@ export const STEPS: readonly StepDef[] = [
     label: "资产",
     goal: "锁定人物、场景、画风的视觉基准（短剧一致性成败在这一步）",
     tip: "角色形象不固定，后面每一镜都会「变脸」",
+    example: "林默｜28 岁男，寸头、黑夹克、左眉一道疤。出租屋｜15㎡、墙皮泛黄、单张钢丝床。",
     ready: true,
   },
   {
@@ -58,6 +63,7 @@ export const STEPS: readonly StepDef[] = [
     label: "分镜",
     goal: "把「场」时间轴化为「镜」，并守住单集总时长",
     tip: "分镜时长加起来超过单集时长，是新手最常犯的错",
+    example: "第 1 集第 1 场拆 3 镜：全景交代环境 6 秒 / 中景摔门 7 秒 / 近景握拳特写 5 秒。",
     ready: true,
   },
   {
@@ -66,6 +72,7 @@ export const STEPS: readonly StepDef[] = [
     label: "关键帧",
     goal: "每镜产出首帧（必需）与尾帧（可选），让画面可控而非纯抽卡",
     tip: "不指定跨镜参考，同场景连续镜头画面会跳",
+    example: "首帧「林默站在雨中，头顶暖黄路灯」；尾帧可留空，或写「低头看手里湿透的彩票」。",
     ready: true,
   },
   {
@@ -74,6 +81,8 @@ export const STEPS: readonly StepDef[] = [
     label: "出题",
     goal: "把分镜字段自动拼装成各家模型可用的提示词与参数",
     tip: "别手写提示词，先让系统拼一版再改",
+    example:
+      "主体「外卖员雨中仰头」+ 环境「夜晚街道、霓虹倒影」+ 风格「写实电影感」→ 一键拼出提示词与 9:16 参数。",
     ready: true,
   },
   {
@@ -82,6 +91,7 @@ export const STEPS: readonly StepDef[] = [
     label: "生成",
     goal: "批量提交生成任务，按「镜号_版本」归档片段并择优",
     tip: "一次提交太多不好挑，建议按场分批",
+    example: "先挑第 1 集第 1 场 3 镜一起提交，每镜出 2 版，采用最连贯的那一版。",
     ready: true,
   },
   {
@@ -90,6 +100,7 @@ export const STEPS: readonly StepDef[] = [
     label: "后期",
     goal: "配音、字幕、BGM 与成片导出",
     tip: "v1.5 提供",
+    example: "配音 → 对字幕 → 铺 BGM → 导出竖屏成片（v1.5 提供）。",
     ready: false,
     disabled: true,
   },

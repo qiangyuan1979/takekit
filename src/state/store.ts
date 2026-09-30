@@ -44,6 +44,8 @@ import {
   type ExportRecord,
   type FrameRole,
   type GenerateEvent,
+  type Material,
+  type MaterialKind,
   type Meta,
   type Project,
   type PromptBundle,
@@ -55,6 +57,7 @@ import {
   type Shot,
   type StyleLock,
   type Task,
+  type Template,
 } from "../lib/types";
 import type { StepId } from "./steps";
 
@@ -84,6 +87,24 @@ function scheduleAutosave(): void {
 async function fetchRecent(): Promise<RecentProject[]> {
   try {
     return await api.listRecentProjects();
+  } catch {
+    return [];
+  }
+}
+
+/** 模板库同理：拿不到就当作「只有内置模板」，不打断启动。 */
+async function fetchTemplates(): Promise<Template[]> {
+  try {
+    return await api.listTemplates();
+  } catch {
+    return [];
+  }
+}
+
+/** 素材库读取失败不阻塞启动（与模板库同策略）。 */
+async function fetchMaterials(): Promise<Material[]> {
+  try {
+    return await api.listMaterials();
   } catch {
     return [];
   }
@@ -182,10 +203,19 @@ export interface AppState {
   error: ApiError | null;
   recent: RecentProject[];
   settings: AppSettings;
+  /** 用户自存的模板；内置模板在 `lib/templates.ts`，不落盘也不进这里。 */
+  templates: Template[];
+
+  /** 跨项目复用的素材库（参考图 / 音频 / 字体），存在应用数据目录。 */
+  materials: Material[];
 
   bootstrap: () => Promise<void>;
   createProject: (parentDir: string, name: string) => Promise<boolean>;
   openProject: (path: string) => Promise<boolean>;
+  /** 整目录复制成新项目，并直接切到新项目；返回是否成功。 */
+  duplicateProject: (path: string, parentDir: string, newName: string) => Promise<boolean>;
+  /** 归档：只把它移出「最近打开」，磁盘上的项目文件原样保留。 */
+  archiveProject: (path: string) => Promise<boolean>;
   closeProject: () => void;
   setStep: (step: StepId) => void;
   updateMeta: (patch: Partial<Meta>) => void;
@@ -330,6 +360,29 @@ export interface AppState {
    * 打开项目后调用：进程重启后队列已经没了，不清洗就会永远卡在进度里。
    */
   markInterruptedTasks: () => number;
+
+  // ---- 模板库（M8） ----
+
+  /** 重新拉一次模板库（启动时已拉过一次；保存 / 删除后由动作自己刷新）。 */
+  loadTemplates: () => Promise<void>;
+  /**
+   * 存为新模板（`id` 为空时后端分配）。返回是否成功 —— 失败时调用方不该清空输入框。
+   */
+  saveTemplate: (template: Template) => Promise<boolean>;
+  deleteTemplate: (id: string) => Promise<boolean>;
+
+  /** 重新拉一次素材库（启动时已拉过一次；导入 / 删除后由动作自己刷新）。 */
+  loadMaterials: () => Promise<void>;
+  /**
+   * 把本地文件复制进素材库。返回是否成功 —— 失败时调用方不该假装已入库。
+   */
+  importMaterial: (kind: MaterialKind, sourcePath: string, name?: string) => Promise<boolean>;
+  deleteMaterial: (id: string) => Promise<boolean>;
+  /**
+   * 整集改写已有出题结果：提示词模板「只补空段」的落地方式。
+   * 没有 `promptBundle` 的镜头原样跳过，不会造出半成品。
+   */
+  mapEpisodePrompts: (episodeId: string, change: (bundle: PromptBundle) => PromptBundle) => void;
 }
 
 export const useAppStore = create<AppState>()((set, get) => {
@@ -351,11 +404,18 @@ export const useAppStore = create<AppState>()((set, get) => {
     error: null,
     recent: [],
     settings: defaultSettings(),
+    templates: [],
+    materials: [],
 
     bootstrap: async () => {
       try {
-        const [settings, recent] = await Promise.all([api.getSettings(), api.listRecentProjects()]);
-        set({ settings, recent, ready: true });
+        const [settings, recent, templates, materials] = await Promise.all([
+          api.getSettings(),
+          api.listRecentProjects(),
+          fetchTemplates(),
+          fetchMaterials(),
+        ]);
+        set({ settings, recent, templates, materials, ready: true });
       } catch (error) {
         set({ error: toApiError(error), ready: true });
       }
@@ -411,6 +471,35 @@ export const useAppStore = create<AppState>()((set, get) => {
         revision: 0,
         error: null,
       });
+    },
+
+    duplicateProject: async (path, parentDir, newName) => {
+      try {
+        const loaded = await api.duplicateProject(path, parentDir, newName);
+        set({
+          project: loaded.project,
+          projectPath: loaded.path,
+          currentStep: "project",
+          saveState: "saved",
+          revision: 0,
+          error: null,
+          recent: await fetchRecent(),
+        });
+        return true;
+      } catch (error) {
+        set({ error: toApiError(error) });
+        return false;
+      }
+    },
+
+    archiveProject: async (path) => {
+      try {
+        set({ recent: await api.archiveProject(path), error: null });
+        return true;
+      } catch (error) {
+        set({ error: toApiError(error) });
+        return false;
+      }
     },
 
     setStep: (step) => set({ currentStep: step }),
@@ -882,5 +971,85 @@ export const useAppStore = create<AppState>()((set, get) => {
       mutate((current) => ({ ...current, tasks: markInterrupted(current.tasks) }));
       return count;
     },
+
+    // ---- 模板库（M8） ----
+
+    loadTemplates: async () => {
+      set({ templates: await fetchTemplates() });
+    },
+
+    saveTemplate: async (template) => {
+      try {
+        set({ templates: await api.saveTemplate(template), error: null });
+        return true;
+      } catch (error) {
+        set({ error: toApiError(error) });
+        return false;
+      }
+    },
+
+    deleteTemplate: async (id) => {
+      try {
+        set({ templates: await api.deleteTemplate(id), error: null });
+        return true;
+      } catch (error) {
+        set({ error: toApiError(error) });
+        return false;
+      }
+    },
+
+    // ---- 素材库（M8） ----
+
+    loadMaterials: async () => {
+      set({ materials: await fetchMaterials() });
+    },
+
+    importMaterial: async (kind, sourcePath, name) => {
+      try {
+        set({ materials: await api.importMaterial(kind, sourcePath, name), error: null });
+        return true;
+      } catch (error) {
+        set({ error: toApiError(error) });
+        return false;
+      }
+    },
+
+    deleteMaterial: async (id) => {
+      try {
+        set({ materials: await api.deleteMaterial(id), error: null });
+        return true;
+      } catch (error) {
+        set({ error: toApiError(error) });
+        return false;
+      }
+    },
+
+    mapEpisodePrompts: (episodeId, change) =>
+      mutate((project) => {
+        const episode = project.episodes.find((item) => item.id === episodeId);
+        const hasBundle =
+          episode?.scenes.some((scene) => scene.shots.some((shot) => shot.promptBundle)) ?? false;
+        // 整集都还没出题：套用无处可落，直接原样返回。
+        if (!episode || !hasBundle) return project;
+
+        return {
+          ...project,
+          episodes: project.episodes.map((item) =>
+            item.id === episodeId
+              ? {
+                  ...item,
+                  scenes: item.scenes.map((scene) => ({
+                    ...scene,
+                    shots: scene.shots.map((shot) =>
+                      shot.promptBundle
+                        ? { ...shot, promptBundle: change(shot.promptBundle) }
+                        : shot,
+                    ),
+                  })),
+                }
+              : item,
+          ),
+        };
+      }),
   };
 });

@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../../lib/ipc";
+import { fillPromptBundle, promptTemplatePayload } from "../../lib/templateOps";
 import { useAppStore } from "../../state/store";
 import {
   exportHandoverPackFile,
@@ -16,6 +17,7 @@ import {
   importStoryboardFile,
 } from "../../state/prompts";
 import { Select } from "../controls";
+import { TemplatePicker } from "../TemplatePicker";
 import { ShotPromptCard } from "./ShotPromptCard";
 
 const STORYBOARD_FORMATS = [
@@ -30,6 +32,7 @@ type ExportFormat = (typeof STORYBOARD_FORMATS)[number]["value"];
 
 export function PromptsWorkspace() {
   const project = useAppStore((state) => state.project);
+  const mapEpisodePrompts = useAppStore((state) => state.mapEpisodePrompts);
   const [episodeId, setEpisodeId] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
   const [format, setFormat] = useState<ExportFormat>("csv");
@@ -133,6 +136,17 @@ export function PromptsWorkspace() {
         >
           整集出题
         </button>
+        <TemplatePicker
+          kind="prompt"
+          label="套用风格模板（只补空段）"
+          onApply={(payload) =>
+            mapEpisodePrompts(episode.id, (bundle) => fillPromptBundle(bundle, payload))
+          }
+          capture={() => {
+            const bundle = shots.find((shot) => shot.promptBundle)?.promptBundle;
+            return bundle ? promptTemplatePayload(bundle) : null;
+          }}
+        />
       </div>
 
       {shots.length === 0 ? <p className="muted">本集还没有镜头，先回第 4 步拆镜。</p> : null}

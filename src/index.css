@@ -19,6 +19,8 @@
   --warn: #d29922;
   --err: #f85149;
   --radius: 10px;
+  /* 界面字体，由设置页改写（见 src/lib/uiFont.ts）。 */
+  --ui-font: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 
   color-scheme: dark;
 }
@@ -37,7 +39,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-family: var(--ui-font);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -97,7 +99,14 @@ h2 {
   gap: 6px;
 }
 
+.recent__row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
 .recent__item {
+  flex: 1;
   width: 100%;
   display: flex;
   align-items: baseline;
@@ -127,6 +136,12 @@ h2 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ---------- 外壳 ---------- */
@@ -520,6 +535,11 @@ h2 {
 .btn--ghost {
   background: transparent;
   color: var(--text-dim);
+}
+
+.btn--tiny {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 /* ---------- 守卫 / 占位 ---------- */
@@ -1013,6 +1033,12 @@ h2 {
   font-weight: 400;
 }
 
+.providerform__note {
+  margin: 0 0 8px 96px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
 .providerform__row {
   display: grid;
   grid-template-columns: 96px 1fr;
@@ -1144,6 +1170,94 @@ h2 {
   font-size: 11px;
 }
 
+/* ---------- 素材库 ---------- */
+
+.materialtabs {
+  display: flex;
+  gap: 6px;
+}
+
+.materialtabs__tab {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.materialtabs__tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.materialtabs__tab--on {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.materialgrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.material {
+  margin: 0;
+  width: 132px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-raised);
+}
+
+.material__media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.material__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.material__ext {
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.material__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.material__name {
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.material__meta {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
 /* ---------- 服装套装 ---------- */
 
 .costumes {
@@ -1261,6 +1375,31 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.scenebar__tpl {
+  position: relative;
+}
+
+.scenebar__tpl > summary {
+  list-style: none;
+}
+
+.scenebar__tpl > summary::-webkit-details-marker {
+  display: none;
+}
+
+.scenebar__tplbox {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  width: 340px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .sdbody {
@@ -1988,4 +2127,123 @@ h2 {
   border-radius: 6px;
   background: var(--bg-soft);
   color: var(--text-dim);
+}
+
+/* ---------- 模板库（M8） ---------- */
+
+.tpl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.tpl__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tpl__row .input {
+  max-width: 240px;
+}
+
+.tpl__manage summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tpl__list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.tpl__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+/* ---------- 新手引导（M8） ---------- */
+
+.onboard {
+  margin: 12px 24px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.onboard__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.onboard__badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.onboard__step {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.onboard__skip {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.onboard__skip:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.onboard__rows {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.onboard__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.onboard__label {
+  flex: none;
+  width: 72px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.onboard__text {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
 }

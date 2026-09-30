@@ -58,6 +58,8 @@ pub struct AppSettings {
     pub image: ProviderConfig,
     pub video: ProviderConfig,
     pub language: String,
+    /// 界面字体：空串=跟随系统，`sans`/`serif`/`kai`=内置字体栈，`font:<素材 id>`=素材库字体。
+    pub ui_font: String,
     pub onboarding_enabled: bool,
 }
 
@@ -73,6 +75,7 @@ impl Default for AppSettings {
             image: ProviderConfig::default(),
             video: ProviderConfig::default(),
             language: "zh-CN".into(),
+            ui_font: String::new(),
             onboarding_enabled: true,
         }
     }

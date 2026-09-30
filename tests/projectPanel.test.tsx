@@ -85,3 +85,39 @@ describe("<ProjectPanel />", () => {
     expect(screen.getByText("请先新建或打开一个项目。")).toBeTruthy();
   });
 });
+
+describe("<ProjectPanel /> · 套用立项预设", () => {
+  it("套用后字段整体补齐，并且还能继续手改", () => {
+    // 先摆一个"填错赛道"的起点，套用后应被整体覆盖。
+    useAppStore.setState({
+      project: makeProject({ genre: "古风言情", visualStyle: "国潮插画", mood: "冷" }),
+    });
+    render(<ProjectPanel />);
+
+    fireEvent.change(screen.getByLabelText("套用立项预设"), {
+      target: { value: "builtin-meta-suspense-drama" },
+    });
+
+    expect(useAppStore.getState().project?.meta).toMatchObject({
+      kind: "short_drama",
+      genre: "悬疑推理",
+      platform: "抖音",
+      aspectRatio: "9:16",
+      resolution: "1080x1920",
+      fps: 30,
+      episodeDurationMs: 60000,
+      episodeCount: 3,
+      visualStyle: "电影感暗调",
+      mood: "紧张",
+    });
+    expect(screen.getByText("已套用「悬疑推理短剧」")).not.toBeNull();
+
+    // 套用只是给一个起点：随后手改作品名，不应把刚套上的字段带回去。
+    fireEvent.change(screen.getByPlaceholderText("例如：重生之我在都市当龙王"), {
+      target: { value: "雨夜追凶" },
+    });
+    expect(useAppStore.getState().project?.meta.title).toBe("雨夜追凶");
+    expect(useAppStore.getState().project?.meta.genre).toBe("悬疑推理");
+    expect(useAppStore.getState().saveState).toBe("dirty");
+  });
+});

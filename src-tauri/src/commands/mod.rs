@@ -4,9 +4,11 @@ pub mod asset;
 pub mod export;
 pub mod generate;
 pub mod llm;
+pub mod material;
 pub mod project;
 pub mod prompt;
 pub mod settings;
+pub mod template;
 
 use crate::error::{AppError, AppResult};
 use std::path::PathBuf;

@@ -10,7 +10,7 @@ import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { assetSrc } from "../../lib/assetOps";
 import { frameByRole, frameRoleLabel, makeFrame, type RefShotOption } from "../../lib/frameOps";
-import type { FrameRole, Shot } from "../../lib/types";
+import type { FrameRole, Material, Shot } from "../../lib/types";
 import {
   deleteFrameCandidate,
   generateFrameCandidates,
@@ -18,6 +18,7 @@ import {
 } from "../../state/keyframes";
 import { useAppStore } from "../../state/store";
 import { Select } from "../controls";
+import { MaterialPicker } from "../MaterialLibrary";
 
 const IMAGE_FILTERS = [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }];
 
@@ -36,6 +37,7 @@ export function FrameStrip({ episodeId, sceneId, shot, role, refOptions }: Frame
   const adoptFrame = useAppStore((state) => state.adoptFrame);
   const setFrameRefShot = useAppStore((state) => state.setFrameRefShot);
   const [busy, setBusy] = useState<"generate" | "upload" | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const existing = frameByRole(shot, role);
   const label = frameRoleLabel(role);
@@ -85,6 +87,11 @@ export function FrameStrip({ episodeId, sceneId, shot, role, refOptions }: Frame
     } finally {
       setBusy(null);
     }
+  };
+
+  /** 从素材库选用：把库内文件复制成这一面帧的候选。 */
+  const pick = async (material: Material): Promise<void> => {
+    await importFrameCandidates(episodeId, sceneId, shot.id, role, [material.path]);
   };
 
   const refOptionsAll = [
@@ -171,7 +178,20 @@ export function FrameStrip({ episodeId, sceneId, shot, role, refOptions }: Frame
         >
           {busy === "upload" ? "导入中…" : "上传图片"}
         </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy !== null}
+          title="从跨项目复用的素材库里选图"
+          onClick={() => setPickerOpen(true)}
+        >
+          从素材库选图
+        </button>
       </div>
+
+      {pickerOpen ? (
+        <MaterialPicker kind="image" onPick={pick} onClose={() => setPickerOpen(false)} />
+      ) : null}
     </section>
   );
 }

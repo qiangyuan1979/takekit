@@ -317,4 +317,19 @@ describe("exportHandoverPackFile", () => {
     expect(outcome).toBeNull();
     expect(ipc.api.exportHandoverPack).not.toHaveBeenCalled();
   });
+
+  it("交接包不完整时失败：返回 null、置错误，不登记记录", async () => {
+    ipc.api.exportHandoverPack.mockRejectedValue({
+      code: "validation",
+      message: "handover pack incomplete",
+      args: { field: "handover", detail: "缺少首帧：第 1 集 第 1 场 第 1 镜" },
+    });
+
+    const outcome = await exportHandoverPackFile("D:/handover");
+
+    expect(outcome).toBeNull();
+    expect(useAppStore.getState().error?.code).toBe("validation");
+    expect(useAppStore.getState().error?.args?.field).toBe("handover");
+    expect(useAppStore.getState().project?.exports).toEqual([]);
+  });
 });

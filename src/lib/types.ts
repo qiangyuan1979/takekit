@@ -303,8 +303,49 @@ export interface ExportRecord {
   createdAt: string;
 }
 
-// ---------- 项目根 ----------
+// ---------- 模板库（M8） ----------
 
+/** 模板类别，字面量与 Rust `commands/template.rs` 的 `KINDS` 一致。 */
+export type TemplateKind = "meta" | "script" | "storyboard" | "camera" | "prompt";
+
+export const TEMPLATE_KINDS: TemplateKind[] = ["meta", "script", "storyboard", "camera", "prompt"];
+
+/** 全局模板库条目；存在应用数据目录的 `templates.json`，跨项目复用。 */
+export interface Template {
+  id: string;
+  kind: TemplateKind;
+  name: string;
+  description: string;
+  /** 各 kind 自定义的载荷；白名单提取与校验在 `lib/templateOps.ts`。 */
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------- 素材库（M8） ----------
+
+/** 素材类别，字面量与 Rust `commands/material.rs` 的 `MaterialKind` 一致。 */
+export type MaterialKind = "image" | "audio" | "font";
+
+export const MATERIAL_KINDS: MaterialKind[] = ["image", "audio", "font"];
+
+/**
+ * 全局素材库条目；存在应用数据目录（`materials.json` 索引 + `materials/` 实体文件），
+ * 跨项目复用。`path` 是库内绝对路径，供 `convertFileSrc` 预览 / 作为导入源。
+ */
+export interface Material {
+  id: string;
+  kind: MaterialKind;
+  name: string;
+  /** 小写扩展名，决定实体文件名后缀（`{id}.{ext}`）。 */
+  ext: string;
+  bytes: number;
+  path: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------- 项目根 ----------
 export interface Project {
   schemaVersion: number;
   id: string;
@@ -353,6 +394,8 @@ export interface AppSettings {
   image: ProviderConfig;
   video: ProviderConfig;
   language: string;
+  /** 界面字体：`""` 跟随系统，`sans`/`serif`/`kai` 内置，`font:<素材 id>` 取自素材库。 */
+  uiFont: string;
   onboardingEnabled: boolean;
 }
 
@@ -364,6 +407,7 @@ export function defaultSettings(): AppSettings {
     image: { baseUrl: "", apiKey: "", model: "" },
     video: { baseUrl: "", apiKey: "", model: "" },
     language: "zh-CN",
+    uiFont: "",
     onboardingEnabled: true,
   };
 }

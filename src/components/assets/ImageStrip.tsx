@@ -8,9 +8,10 @@
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { assetSrc } from "../../lib/assetOps";
-import type { AssetKind } from "../../lib/types";
+import type { AssetKind, Material } from "../../lib/types";
 import { deleteAssetImage, importAssetImage } from "../../state/assetImages";
 import { useAppStore } from "../../state/store";
+import { MaterialPicker } from "../MaterialLibrary";
 
 const IMAGE_FILTERS = [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp"] }];
 
@@ -46,6 +47,7 @@ export function ImageStrip({
 }: ImageStripProps) {
   const projectPath = useAppStore((state) => state.projectPath);
   const [busy, setBusy] = useState<"upload" | "generate" | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const handleUpload = async () => {
     const chosen = await openDialog({ multiple, filters: IMAGE_FILTERS });
@@ -55,6 +57,11 @@ export function ImageStrip({
     setBusy("upload");
     await importAssetImage(kind, ownerId, sources);
     setBusy(null);
+  };
+
+  /** 从素材库选用：把库内文件复制进当前项目（项目依然可以整体搬家）。 */
+  const handlePick = async (material: Material): Promise<void> => {
+    await importAssetImage(kind, ownerId, [material.path]);
   };
 
   const handleGenerate = async () => {
@@ -108,6 +115,15 @@ export function ImageStrip({
         >
           {busy === "upload" ? "导入中…" : paths.length === 0 ? "上传图片" : "追加图片"}
         </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy !== null}
+          title="从跨项目复用的素材库里选图"
+          onClick={() => setPickerOpen(true)}
+        >
+          从素材库选图
+        </button>
         {onGenerate ? (
           <button
             type="button"
@@ -123,6 +139,10 @@ export function ImageStrip({
           <span className="thumbs__note">{generateDisabledReason}</span>
         ) : null}
       </div>
+
+      {pickerOpen ? (
+        <MaterialPicker kind="image" onPick={handlePick} onClose={() => setPickerOpen(false)} />
+      ) : null}
     </div>
   );
 }

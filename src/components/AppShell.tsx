@@ -6,14 +6,18 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { SAVE_LABELS, describeError } from "../i18n";
+import { materialFontFaceCss, resolveUiFont } from "../lib/uiFont";
 import { checkStep, stepById, STEPS, type StepId } from "../state/steps";
 import { useAppStore } from "../state/store";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { AssetsWorkspace } from "./assets/AssetsWorkspace";
 import { GenerateWorkspace } from "./generate/GenerateWorkspace";
 import { KeyframesWorkspace } from "./keyframes/KeyframesWorkspace";
+import { MaterialLibrary } from "./MaterialLibrary";
+import { OnboardingCard } from "./OnboardingCard";
 import { ProjectPanel } from "./panels/ProjectPanel";
 import { PromptsWorkspace } from "./prompts/PromptsWorkspace";
 import { ScriptWorkspace } from "./script/ScriptWorkspace";
@@ -57,9 +61,13 @@ export function AppShell() {
     saveState,
     error,
     recent,
+    settings,
+    materials,
     bootstrap,
     createProject,
     openProject,
+    duplicateProject,
+    archiveProject,
     closeProject,
     setStep,
     save,
@@ -67,13 +75,39 @@ export function AppShell() {
   } = useAppStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
+  // 本次会话里被「跳过」的步骤：只隐藏对应那一步的引导，设置里的总开关仍可一次关掉全部。
+  const [skippedSteps, setSkippedSteps] = useState<ReadonlySet<StepId>>(() => new Set());
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
 
+  // 界面字体：改 CSS 变量；选了素材库字体时额外挂一条 @font-face。
+  useEffect(() => {
+    const fonts = materials.filter((material) => material.kind === "font");
+    const { family, materialId } = resolveUiFont(
+      settings.uiFont,
+      fonts.map((material) => material.id),
+    );
+    document.documentElement.style.setProperty("--ui-font", family);
+
+    const styleId = "takekit-ui-font";
+    const existing = document.getElementById(styleId);
+    const chosen = materialId ? fonts.find((material) => material.id === materialId) : undefined;
+    if (!chosen) {
+      existing?.remove();
+      return;
+    }
+    const style = existing ?? document.createElement("style");
+    style.id = styleId;
+    style.textContent = materialFontFaceCss(convertFileSrc(chosen.path));
+    if (!existing) document.head.appendChild(style);
+  }, [settings.uiFont, materials]);
+
   const step = stepById(currentStep);
   const guard = useMemo(() => checkStep(currentStep, project), [currentStep, project]);
+  const onboardingVisible = settings.onboardingEnabled && !skippedSteps.has(step.id);
 
   const prevStep = step.no > 1 ? STEPS[step.no - 2] : undefined;
   const nextStep = STEPS[step.no];
@@ -93,6 +127,28 @@ export function AppShell() {
     if (typeof chosen !== "string") return;
     await openProject(chosen);
   }, [openProject]);
+
+  // 复制：先让用户确认副本的位置与名字（默认「原名 副本」），目录整份带过去。
+  const handleDuplicate = useCallback(
+    async (path: string, name: string) => {
+      const { parentDir } = splitProjectPath(path);
+      const chosen = await saveDialog({
+        title: "选择副本的保存位置",
+        defaultPath: `${parentDir}${parentDir.includes("\\") ? "\\" : "/"}${name} 副本`,
+      });
+      if (!chosen) return;
+      const dest = splitProjectPath(chosen);
+      await duplicateProject(path, dest.parentDir, dest.name);
+    },
+    [duplicateProject],
+  );
+
+  const handleArchive = useCallback(
+    async (path: string) => {
+      await archiveProject(path);
+    },
+    [archiveProject],
+  );
 
   if (!ready) {
     return <div className="boot">正在启动 TakeKit…</div>;
@@ -117,7 +173,7 @@ export function AppShell() {
             <p className="recent__title">最近打开</p>
             <ul className="recent__list">
               {recent.map((item) => (
-                <li key={item.path}>
+                <li key={item.path} className="recent__row">
                   <button
                     type="button"
                     className="recent__item"
@@ -127,6 +183,24 @@ export function AppShell() {
                     <span className="recent__name">{item.name}</span>
                     <span className="recent__path">{item.path}</span>
                   </button>
+                  <div className="recent__actions">
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--tiny"
+                      title="整份复制成新项目"
+                      onClick={() => void handleDuplicate(item.path, item.name)}
+                    >
+                      复制
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--tiny"
+                      title="从「最近打开」移出，磁盘上的项目文件会保留"
+                      onClick={() => void handleArchive(item.path)}
+                    >
+                      归档
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -158,10 +232,28 @@ export function AppShell() {
           <button
             type="button"
             className="btn btn--ghost"
+            onClick={() => setMaterialsOpen(true)}
+            title="管理跨项目复用的参考图 / 音频 / 字体"
+          >
+            素材库
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
             onClick={() => setSettingsOpen(true)}
             title="配置模型服务与 API Key"
           >
             设置
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => {
+              if (projectPath) void handleDuplicate(projectPath, project.name);
+            }}
+            title="整份复制成新项目，原项目不受影响"
+          >
+            复制项目
           </button>
           <button
             type="button"
@@ -195,8 +287,15 @@ export function AppShell() {
             <h2 className="stage__title">
               第 {step.no} 步 · {step.label}
             </h2>
-            <p className="stage__goal">{step.goal}</p>
+            {onboardingVisible ? null : <p className="stage__goal">{step.goal}</p>}
           </div>
+
+          {onboardingVisible ? (
+            <OnboardingCard
+              step={step}
+              onSkip={() => setSkippedSteps((prev) => new Set(prev).add(step.id))}
+            />
+          ) : null}
 
           <div className="stage__content">
             <ErrorBoundary>
@@ -245,6 +344,7 @@ export function AppShell() {
       </div>
 
       {settingsOpen ? <SettingsPanel onClose={() => setSettingsOpen(false)} /> : null}
+      {materialsOpen ? <MaterialLibrary onClose={() => setMaterialsOpen(false)} /> : null}
     </div>
   );
 }

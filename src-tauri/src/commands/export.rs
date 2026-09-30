@@ -111,6 +111,15 @@ pub fn export_handover_pack(
     project: Project,
     dest_dir: String,
 ) -> AppResult<HandoverOutcome> {
+    // 先验完整性再落盘：缺首帧就整个不导出，免得留下一个"看着齐、其实少帧"的目录。
+    let missing = missing_first_frames(&project);
+    if !missing.is_empty() {
+        return Err(AppError::Validation {
+            field: "handover".into(),
+            detail: format!("缺少首帧：{}", summarize(&missing)),
+        });
+    }
+
     let root = resolve_project_path(&project_path)?.0;
     let dest = PathBuf::from(&dest_dir);
     fs::create_dir_all(&dest)?;
@@ -249,8 +258,9 @@ fn param_cells(episode_no: u32, scene_no: u32, shot: &Shot) -> [String; 13] {
 
 /// 把每镜的定稿帧（没有定稿则退回首张候选）拷进 `<dest>/frames/`。
 ///
-/// 返回关键帧清单 CSV 与包内相对路径清单。指向已不存在文件的帧会明确报错——
-/// 静默少一张会让接手的人以为"这镜本来就没帧"。
+/// 返回关键帧清单 CSV 与包内相对路径清单。进来的项目已过 [`missing_first_frames`]，
+/// 所以这里只会因"指向已不存在文件"报错——静默少一张会让接手的人以为"这镜本来就没帧"。
+/// 尾帧若一版都没生成，登记表里就没有这一行，属正常。
 fn copy_keyframes(
     root: &Path,
     project: &Project,
@@ -321,6 +331,41 @@ fn pick_frame(frame: &Frame) -> Option<&str> {
         .or_else(|| frame.candidates.first().map(String::as_str))
         .map(str::trim)
         .filter(|path| !path.is_empty())
+}
+
+/// 每镜「首帧」的可交付性检查：返回缺首帧的镜头清单（空 = 齐全）。
+///
+/// 首帧是图生视频的输入，缺了这镜根本没法生成——所以宁可不导出，也不能让接手的人
+/// 以为"这镜本来就没首帧"。尾帧不卡：它只是让画面停在确定处的可选手段。
+fn missing_first_frames(project: &Project) -> Vec<String> {
+    let mut missing = Vec::new();
+    for episode in &project.episodes {
+        for scene in &episode.scenes {
+            for shot in &scene.shots {
+                let has_first = shot
+                    .frames
+                    .iter()
+                    .any(|frame| frame.role == FrameRole::First && pick_frame(frame).is_some());
+                if !has_first {
+                    missing.push(format!(
+                        "第 {} 集 第 {} 场 第 {} 镜",
+                        episode.no, scene.no, shot.no
+                    ));
+                }
+            }
+        }
+    }
+    missing
+}
+
+/// 把清单压成一句话：最多列 5 条，多出来的折成「共 N 镜」。
+fn summarize(items: &[String]) -> String {
+    let shown = items.iter().take(5).cloned().collect::<Vec<_>>().join("、");
+    if items.len() > 5 {
+        format!("{shown}，共 {} 镜", items.len())
+    } else {
+        shown
+    }
 }
 
 fn role_name(role: FrameRole) -> &'static str {
@@ -718,6 +763,40 @@ mod tests {
         assert!(markdown.contains("短发女主推开玻璃门"));
         assert!(markdown.contains("kling-v1"));
         assert!(markdown.contains("已出题 1 镜"));
+    }
+
+    #[test]
+    fn handover_pack_refuses_a_shot_that_has_no_first_frame() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+
+        // ready_project 的镜头默认没有 frames——正是"第 5 步还没做"的常态。
+        // 再加一镜，验证清单会把每一镜都点出来。
+        let mut project = ready_project();
+        project.episodes[0].scenes[0].shots.push(Shot {
+            no: 2,
+            ..Shot::default()
+        });
+
+        let dest = dir.path().join("handover");
+        let error = export_handover_pack(
+            root.display().to_string(),
+            project,
+            dest.display().to_string(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "validation");
+        assert_eq!(
+            error.args().get("field").map(String::as_str),
+            Some("handover")
+        );
+        let detail = error.args().get("detail").cloned().unwrap_or_default();
+        assert!(detail.contains("第 1 集 第 1 场 第 1 镜"), "{detail}");
+        assert!(detail.contains("第 1 集 第 1 场 第 2 镜"), "{detail}");
+        // 缺首帧就一个都不导：连目录都不该建出来。
+        assert!(!dest.exists(), "缺首帧时不该留下半成品目录");
     }
 
     #[test]

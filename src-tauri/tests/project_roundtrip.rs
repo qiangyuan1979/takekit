@@ -6,6 +6,7 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 use takekit_lib::project::store;
@@ -216,6 +217,47 @@ fn sample_project() -> Project {
             created_at: "2026-09-29T10:00:00Z".into(),
         }],
     }
+}
+
+#[test]
+fn duplicate_project_resets_identity_and_copies_the_whole_folder() {
+    let dir = tempdir().unwrap();
+    let (original, root) = store::create_project_dir(dir.path(), "原项目").unwrap();
+    let asset = root.join("assets").join("characters").join("a.png");
+    fs::write(&asset, b"png").unwrap();
+
+    let (copy, dest) = store::duplicate_project(&root, dir.path(), "副本").unwrap();
+
+    assert_ne!(copy.id, original.id, "复制品要换新 id");
+    assert_eq!(copy.name, "副本");
+    assert_eq!(copy.meta.title, "副本");
+    assert_eq!(dest, dir.path().join("副本"));
+    // 整目录复制：project.json 与已有资产都在新目录里。
+    assert!(dest.join(store::PROJECT_FILE).is_file());
+    assert!(dest
+        .join("assets")
+        .join("characters")
+        .join("a.png")
+        .is_file());
+    // 原项目原样保留。
+    assert!(root.join(store::PROJECT_FILE).is_file());
+    assert_eq!(store::read_project(&root).unwrap().id, original.id);
+}
+
+#[test]
+fn archive_removes_only_the_target_and_keeps_it_on_disk() {
+    let dir = tempdir().unwrap();
+    let data = dir.path().join("appdata");
+    fs::create_dir_all(&data).unwrap();
+    let project = Project::new("要归档的", WorkKind::ShortDrama);
+    store::push_recent(&data, &project, Path::new("E:/tmp/one")).unwrap();
+    store::push_recent(&data, &project, Path::new("E:/tmp/two")).unwrap();
+
+    let remaining = store::remove_recent(&data, "E:/tmp/one").unwrap();
+
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].path, "E:/tmp/two");
+    assert_eq!(store::load_recent(&data).len(), 1, "落盘结果一致");
 }
 
 #[test]

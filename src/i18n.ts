@@ -26,9 +26,15 @@ const ERROR_TEMPLATES: Record<string, string> = {
   unknown: "{message}",
 };
 
+/** 交接包完整性校验用的是通用 `validation` 码（field = "handover"），文案单独给。 */
+const HANDOVER_INCOMPLETE: string = "交接包还不完整：{detail}";
+
 /** 把错误对象翻译成一句可直接展示给新手的中文。 */
 export function describeError(error: ApiError): string {
-  const template = ERROR_TEMPLATES[error.code] ?? ERROR_TEMPLATES.unknown;
+  const template =
+    error.code === "validation" && error.args?.field === "handover"
+      ? HANDOVER_INCOMPLETE
+      : (ERROR_TEMPLATES[error.code] ?? ERROR_TEMPLATES.unknown);
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => {
     const value = error.args?.[key];
     return value ?? (key === "message" ? error.message : whole);

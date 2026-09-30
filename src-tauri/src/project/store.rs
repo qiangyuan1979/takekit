@@ -211,8 +211,12 @@ pub fn create_project_dir(parent: &Path, name: &str) -> AppResult<(Project, Path
     Ok((project, root))
 }
 
-/// 复制项目到同级的 `<newName>` 目录，并重置 id / 名称 / 时间戳。
-pub fn duplicate_project(src_root: &Path, new_name: &str) -> AppResult<(Project, PathBuf)> {
+/// 复制项目整目录到 `parent_dir/<newName>`，并重置 id / 名称 / 时间戳。
+pub fn duplicate_project(
+    src_root: &Path,
+    parent_dir: &Path,
+    new_name: &str,
+) -> AppResult<(Project, PathBuf)> {
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
         return Err(AppError::Validation {
@@ -225,14 +229,8 @@ pub fn duplicate_project(src_root: &Path, new_name: &str) -> AppResult<(Project,
             path: src_root.display().to_string(),
         });
     }
-    let parent = src_root.parent().ok_or_else(|| {
-        AppError::Internal(format!(
-            "source project has no parent directory: {}",
-            src_root.display()
-        ))
-    })?;
 
-    let dest = parent.join(sanitize_folder_name(trimmed));
+    let dest = parent_dir.join(sanitize_folder_name(trimmed));
     if dest.exists() {
         return Err(AppError::Conflict {
             path: dest.display().to_string(),
@@ -335,4 +333,14 @@ pub fn push_recent(app_data_dir: &Path, project: &Project, root: &Path) -> AppRe
     );
     items.truncate(MAX_RECENT);
     save_recent(app_data_dir, &items)
+}
+
+/// 归档：把某个项目从「最近打开」里移出，返回剩余列表。
+///
+/// 只动 `recent.json`，磁盘上的项目目录原样保留——归档不等于删除。
+pub fn remove_recent(app_data_dir: &Path, path: &str) -> AppResult<Vec<RecentProject>> {
+    let mut items = load_recent(app_data_dir);
+    items.retain(|item| item.path != path);
+    save_recent(app_data_dir, &items)?;
+    Ok(items)
 }

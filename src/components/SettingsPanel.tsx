@@ -8,7 +8,8 @@
 import { useState } from "react";
 import { useAppStore } from "../state/store";
 import type { AppSettings, ProviderConfig } from "../lib/types";
-import { TextInput } from "./controls";
+import { FONT_PRESETS, materialFontToken, resolveUiFont } from "../lib/uiFont";
+import { Select, TextInput } from "./controls";
 
 interface ProviderFormProps {
   title: string;
@@ -69,8 +70,25 @@ export interface SettingsPanelProps {
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const settings = useAppStore((state) => state.settings);
+  const materials = useAppStore((state) => state.materials);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const [draft, setDraft] = useState<AppSettings>(settings);
+
+  // 素材库里的字体作为可选项；已被删掉的令牌会回落成「默认」，不会选中一个不存在的项。
+  const fontMaterials = materials.filter((material) => material.kind === "font");
+  const fontIds = fontMaterials.map((material) => material.id);
+  const fontOptions = [
+    ...FONT_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })),
+    ...fontMaterials.map((material) => ({
+      value: materialFontToken(material.id),
+      label: `素材库 · ${material.name}`,
+    })),
+  ];
+  const fontValue = FONT_PRESETS.some((preset) => preset.id === draft.uiFont)
+    ? draft.uiFont
+    : resolveUiFont(draft.uiFont, fontIds).materialId
+      ? draft.uiFont
+      : "";
 
   const handleSave = async (): Promise<void> => {
     await updateSettings(draft);
@@ -161,6 +179,52 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             placeholderModel="例如：kling-v1"
             onChange={(video) => setDraft({ ...draft, video })}
           />
+
+          <section className="providerform">
+            <p className="providerform__title">
+              界面
+              <span className="providerform__hint">只影响你看到的界面，不影响生成内容</span>
+            </p>
+            <label className="providerform__row">
+              <span className="providerform__label">界面语言</span>
+              <Select
+                value={draft.language}
+                options={[{ value: "zh-CN", label: "简体中文" }]}
+                onChange={(language) => setDraft({ ...draft, language })}
+              />
+            </label>
+            <p className="providerform__note">v1 只提供简体中文，更多语言在后续版本加入。</p>
+            <label className="providerform__row">
+              <span className="providerform__label">界面字体</span>
+              <Select
+                value={fontValue}
+                options={fontOptions}
+                onChange={(uiFont) => setDraft({ ...draft, uiFont })}
+              />
+            </label>
+            <p className="providerform__note">
+              {fontMaterials.length > 0
+                ? "「素材库 · …」是你在素材库里导入的字体，保存后立即生效。"
+                : "想用自己的字体？先在顶栏「素材库」里导入字体，这里就会出现。"}
+            </p>
+          </section>
+
+          <section className="providerform">
+            <p className="providerform__title">
+              新手引导
+              <span className="providerform__hint">关闭后每一步不再显示「这步干什么」引导卡</span>
+            </p>
+            <label className="providerform__row">
+              <span className="providerform__label">显示引导</span>
+              <input
+                type="checkbox"
+                checked={draft.onboardingEnabled}
+                onChange={(event) =>
+                  setDraft({ ...draft, onboardingEnabled: event.target.checked })
+                }
+              />
+            </label>
+          </section>
         </div>
 
         <footer className="modal__foot">

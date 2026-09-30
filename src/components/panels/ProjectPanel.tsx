@@ -6,10 +6,12 @@
  */
 
 import { ASPECT_RATIOS, type AspectRatio, type WorkKind } from "../../lib/types";
+import { metaPatchFrom, metaPayloadFrom } from "../../lib/templateOps";
 import { useAppStore } from "../../state/store";
 import { CollapsibleCard } from "../CollapsibleCard";
 import { Select, TextInput, joinList, splitList } from "../controls";
 import { FieldRow } from "../FieldRow";
+import { TemplatePicker } from "../TemplatePicker";
 
 // ---------- 下拉字典（新手可选项，避免自由填写踩坑） ----------
 
@@ -84,6 +86,13 @@ export function ProjectPanel() {
 
   return (
     <div className="panel">
+      <TemplatePicker
+        kind="meta"
+        label="套用立项预设"
+        onApply={(payload) => updateMeta(metaPatchFrom(payload))}
+        capture={() => metaPayloadFrom(meta)}
+      />
+
       <CollapsibleCard step="卡1" title="作品定位" hint="决定后面所有提示词的用词与节奏">
         <FieldRow label="作品名" why="用于文件命名与导出成片的标题">
           <TextInput

@@ -7,11 +7,13 @@
 
 import { BEATS_LOCK_KEY, SCRIPT_FIELDS, structuresFor } from "../../lib/scriptTemplates";
 import { collectCharacterRefs, undefinedCharacterRefs } from "../../lib/scriptOps";
+import { scriptPatchFrom, scriptPayloadFrom } from "../../lib/templateOps";
 import type { Script } from "../../lib/types";
 import { useAppStore } from "../../state/store";
 import { CollapsibleCard } from "../CollapsibleCard";
 import { Select, TextArea, TextInput } from "../controls";
 import { FieldRow } from "../FieldRow";
+import { TemplatePicker } from "../TemplatePicker";
 import { FieldActions } from "./FieldActions";
 import { SceneList } from "./SceneList";
 
@@ -26,6 +28,7 @@ function splitLines(text: string): string[] {
 export function ScriptPanel() {
   const project = useAppStore((state) => state.project);
   const updateScript = useAppStore((state) => state.updateScript);
+  const applyScriptPatch = useAppStore((state) => state.applyScriptPatch);
   const updateEpisode = useAppStore((state) => state.updateEpisode);
   const addEpisode = useAppStore((state) => state.addEpisode);
   const removeEpisode = useAppStore((state) => state.removeEpisode);
@@ -43,6 +46,25 @@ export function ScriptPanel() {
 
   return (
     <div className="panel">
+      <TemplatePicker
+        kind="script"
+        label="套用题材模板"
+        onApply={(payload) => {
+          const patch = scriptPatchFrom(payload);
+          const structure = patch.structure;
+          delete patch.structure;
+          // A 段字段经 applyScriptPatch 写回，字段锁在这里自动生效。
+          applyScriptPatch(patch);
+          if (structure && structures.some((item) => item.id === structure)) {
+            updateScript({ structure });
+          }
+        }}
+        capture={() => {
+          const payload = scriptPayloadFrom(script);
+          return Object.keys(payload).length > 0 ? payload : null;
+        }}
+      />
+
       <CollapsibleCard step="A" title="创意核" hint="先把故事钉死，后面每一场都从这六句长出来">
         {SCRIPT_FIELDS.map(({ key, label, why }) => (
           <FieldRow key={key} label={label} why={why}>
