@@ -24,6 +24,7 @@ import {
   structureById,
   templateEpisode,
 } from "../lib/scriptTemplates";
+import { makeShot, moveShots as reorderShot, renumberShots } from "../lib/shotOps";
 import {
   defaultSettings,
   type AppSettings,
@@ -37,6 +38,7 @@ import {
   type Scene,
   type SceneAsset,
   type Script,
+  type Shot,
   type StyleLock,
 } from "../lib/types";
 import type { StepId } from "./steps";
@@ -118,6 +120,28 @@ function replaceStyleLock(project: Project, change: (styleLock: StyleLock) => St
   return { ...project, assets: { ...project.assets, styleLock: change(project.assets.styleLock) } };
 }
 
+/** 定位到某一场，把它的镜头列表换掉（镜号重排由调用方决定）。 */
+function replaceSceneShots(
+  project: Project,
+  episodeId: string,
+  sceneId: string,
+  change: (shots: Shot[]) => Shot[],
+): Project {
+  return {
+    ...project,
+    episodes: project.episodes.map((episode) =>
+      episode.id === episodeId
+        ? {
+            ...episode,
+            scenes: episode.scenes.map((scene) =>
+              scene.id === sceneId ? { ...scene, shots: change(scene.shots) } : scene,
+            ),
+          }
+        : episode,
+    ),
+  };
+}
+
 export interface AppState {
   /** 首次启动的初始化是否完成（设置 + 最近项目）。 */
   ready: boolean;
@@ -195,6 +219,17 @@ export interface AppState {
 
   /** 摘掉一张图的引用；`project.json` 先断开，文件删除由编排层随后完成。 */
   detachAssetImage: (kind: AssetKind, ownerId: string, path: string) => void;
+
+  // ---- 分镜（M4） ----
+
+  /** 整场替换镜头列表：离线拆镜与 AI 拆镜的落地点（传 `[]` 即清空本场）。 */
+  setSceneShots: (episodeId: string, sceneId: string, shots: Shot[]) => void;
+  addShot: (episodeId: string, sceneId: string, patch?: Partial<Shot>) => void;
+  updateShot: (episodeId: string, sceneId: string, shotId: string, patch: Partial<Shot>) => void;
+  removeShot: (episodeId: string, sceneId: string, shotId: string) => void;
+  moveShot: (episodeId: string, sceneId: string, shotId: string, delta: number) => void;
+  /** 跨场批量改：表格视图里勾选多镜后统一设置景别 / 运镜 / 时长。 */
+  updateManyShots: (episodeId: string, shotIds: string[], patch: Partial<Shot>) => void;
 }
 
 export const useAppStore = create<AppState>()((set, get) => {
@@ -584,6 +619,67 @@ export const useAppStore = create<AppState>()((set, get) => {
               refImages: styleLock.refImages.filter((item) => item !== path),
             }));
         }
+      }),
+
+    // ---- 分镜（M4） ----
+
+    setSceneShots: (episodeId, sceneId, shots) =>
+      mutate((project) =>
+        replaceSceneShots(project, episodeId, sceneId, () => renumberShots(shots)),
+      ),
+
+    addShot: (episodeId, sceneId, patch) =>
+      mutate((project) =>
+        replaceSceneShots(project, episodeId, sceneId, (shots) =>
+          renumberShots([...shots, makeShot({ ...patch, episodeId, sceneId })]),
+        ),
+      ),
+
+    updateShot: (episodeId, sceneId, shotId, patch) =>
+      mutate((project) =>
+        replaceSceneShots(project, episodeId, sceneId, (shots) =>
+          shots.map((shot) => (shot.id === shotId ? { ...shot, ...patch } : shot)),
+        ),
+      ),
+
+    removeShot: (episodeId, sceneId, shotId) =>
+      mutate((project) =>
+        replaceSceneShots(project, episodeId, sceneId, (shots) =>
+          renumberShots(shots.filter((shot) => shot.id !== shotId)),
+        ),
+      ),
+
+    moveShot: (episodeId, sceneId, shotId, delta) =>
+      mutate((project) =>
+        replaceSceneShots(project, episodeId, sceneId, (shots) =>
+          reorderShot(shots, shotId, delta),
+        ),
+      ),
+
+    updateManyShots: (episodeId, shotIds, patch) =>
+      mutate((project) => {
+        if (shotIds.length === 0) return project;
+        const ids = new Set(shotIds);
+        return {
+          ...project,
+          episodes: project.episodes.map((episode) =>
+            episode.id === episodeId
+              ? {
+                  ...episode,
+                  scenes: episode.scenes.map((scene) =>
+                    scene.shots.some((shot) => ids.has(shot.id))
+                      ? {
+                          ...scene,
+                          shots: scene.shots.map((shot) =>
+                            ids.has(shot.id) ? { ...shot, ...patch } : shot,
+                          ),
+                        }
+                      : scene,
+                  ),
+                }
+              : episode,
+          ),
+        };
       }),
   };
 });

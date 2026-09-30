@@ -39,18 +39,18 @@ export interface ScriptAiResult {
   scene: ParsedScenePatch | null;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** 非空字符串才算有效值：模型很爱用空串表示"我不确定"。 */
-function asString(value: unknown): string | undefined {
+export function asString(value: unknown): string | undefined {
   if (typeof value === "string") return value.trim() || undefined;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return undefined;
 }
 
-function asStringArray(value: unknown): string[] {
+export function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
   for (const item of value) {

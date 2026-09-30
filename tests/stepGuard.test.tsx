@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { StepGuard } from "../src/components/StepGuard";
 import { makeEpisode, makeScene } from "../src/lib/scriptOps";
+import { makeShot } from "../src/lib/shotOps";
 import { defaultScript } from "../src/lib/types";
 import { checkStep } from "../src/state/steps";
 import { makeProject } from "./support/project";
@@ -105,6 +106,48 @@ describe("checkStep('script')", () => {
     );
 
     expect(checkStep("script", project).ok).toBe(true);
+  });
+});
+
+describe("checkStep('storyboard')", () => {
+  const shot = makeShot({ episodeId: "ep-1", sceneId: "s-1" });
+
+  it("某场还没拆镜时不放行，并指出是哪一集哪一场", () => {
+    const project = makeProject(
+      {},
+      {
+        episodes: [
+          makeEpisode(1, {
+            id: "ep-1",
+            scenes: [
+              makeScene({ id: "s-1", no: 1, shots: [shot] }),
+              makeScene({ id: "s-2", no: 2, location: "天台" }),
+            ],
+          }),
+        ],
+      },
+    );
+
+    const result = checkStep("storyboard", project);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(["第 1 集 第 2 场：还没有镜头，先拆镜"]);
+  });
+
+  it("每场都有镜头后放行（总时长超标不阻塞）", () => {
+    const project = makeProject(
+      { episodeDurationMs: 1000 },
+      {
+        episodes: [
+          makeEpisode(1, {
+            id: "ep-1",
+            scenes: [makeScene({ id: "s-1", no: 1, shots: [shot, { ...shot, id: "shot-2" }] })],
+          }),
+        ],
+      },
+    );
+
+    expect(checkStep("storyboard", project).ok).toBe(true);
   });
 });
 

@@ -17,6 +17,7 @@ import { ScriptWorkspace } from "./script/ScriptWorkspace";
 import { SettingsPanel } from "./SettingsPanel";
 import { StepGuard } from "./StepGuard";
 import { StepRail } from "./StepRail";
+import { StoryboardWorkspace } from "./storyboard/StoryboardWorkspace";
 
 /** 把用户选中的保存路径拆成「父目录 + 项目名」。 */
 function splitProjectPath(path: string): { parentDir: string; name: string } {
@@ -202,6 +203,8 @@ export function AppShell() {
                 <ScriptWorkspace />
               ) : step.id === "assets" ? (
                 <AssetsWorkspace />
+              ) : step.id === "storyboard" ? (
+                <StoryboardWorkspace />
               ) : (
                 <StepPlaceholder stepId={step.id} />
               )}

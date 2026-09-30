@@ -56,7 +56,7 @@ export const STEPS: readonly StepDef[] = [
     label: "分镜",
     goal: "把「场」时间轴化为「镜」，并守住单集总时长",
     tip: "分镜时长加起来超过单集时长，是新手最常犯的错",
-    ready: false,
+    ready: true,
   },
   {
     id: "keyframes",
@@ -166,8 +166,26 @@ function checkAssets(project: Project): GuardResult {
 }
 
 /**
+ * 第 4 步验收：每一场都得有镜头，否则第 5 步无从出关键帧。
+ *
+ * 总时长超标只由时长条实时提示、不作阻塞——新手常先粗排一遍再回头砍时长，
+ * 在这个阶段拦住他去不了下一步，反而会打断"先跑通流程"的节奏。
+ */
+function checkStoryboard(project: Project): GuardResult {
+  const issues: string[] = [];
+  for (const episode of project.episodes) {
+    for (const scene of episode.scenes) {
+      if (scene.shots.length === 0) {
+        issues.push(`第 ${episode.no} 集 第 ${scene.no} 场：还没有镜头，先拆镜`);
+      }
+    }
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+/**
  * 进入下一步前的阻塞检查。尚未实现的环节一律放行，
- * 待各自的里程碑补齐校验规则（M4 分镜……）。
+ * 待各自的里程碑补齐校验规则（M5 关键帧……）。
  */
 export function checkStep(step: StepId, project: Project | null): GuardResult {
   if (!project) return { ok: false, issues: ["还没有新建或打开项目"] };
@@ -178,6 +196,8 @@ export function checkStep(step: StepId, project: Project | null): GuardResult {
       return checkScript(project);
     case "assets":
       return checkAssets(project);
+    case "storyboard":
+      return checkStoryboard(project);
     default:
       return { ok: true, issues: [] };
   }

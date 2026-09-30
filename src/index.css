@@ -1176,3 +1176,377 @@ h2 {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+
+/* ---------- 分镜工作区（第 4 步） ---------- */
+
+.sdbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.sdbar__views {
+  display: flex;
+  gap: 4px;
+}
+
+/* 视图切换按钮的选中态：图标按钮本身没有 pressed 样式，这里补上。 */
+.sdbar__views .icon-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sdnote {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.sdnote--ok {
+  border-color: rgba(63, 185, 80, 0.4);
+  color: var(--ok);
+}
+
+.sdnote--error {
+  border-color: rgba(248, 81, 73, 0.45);
+  color: var(--err);
+}
+
+.sdnote--busy {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sdnote--hint {
+  color: var(--text-faint);
+}
+
+.sdscenes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scenebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.scenebar__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scenebar__count {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.scenebar__actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sdbody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 单集时长条 ---------- */
+
+.dbar {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dbar__empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.dbar__track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.dbar__fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
+
+.dbar[data-over="true"] .dbar__fill {
+  background: var(--err);
+}
+
+.dbar__text {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.dbar[data-over="true"] .dbar__text {
+  color: var(--err);
+}
+
+/* ---------- 分镜表格视图 ---------- */
+
+.shot-table {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shot-table__grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.shot-table__row {
+  display: grid;
+  grid-template-columns:
+    36px 44px 68px 104px 104px 82px minmax(150px, 1.6fr)
+    minmax(120px, 1.1fr) minmax(120px, 1fr) minmax(120px, 1fr) 104px 128px;
+  align-items: center;
+  box-sizing: border-box;
+  height: 48px;
+  min-width: 1180px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shot-table__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-raised);
+}
+
+.shot-table__row--head {
+  height: 36px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+
+.shot-table__body {
+  position: relative;
+}
+
+.shot-table__spacer {
+  position: relative;
+}
+
+.shot-table__window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.shot-table__cell {
+  min-width: 0;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.shot-table__cell > .input {
+  width: 100%;
+}
+
+.shot-table__no {
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.shot-table__muted {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.shot-table__ops {
+  gap: 4px;
+}
+
+/* 表格里一行只有 48px 高，角色标签必须单行横向排列，否则会把行撑高。 */
+.shot-table .charchips {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+/* ---------- 批量编辑条 ---------- */
+
+.shot-bulk {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.shot-bulk__count {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.shot-bulk__num {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.shot-bulk__num > .input {
+  width: 64px;
+}
+
+/* ---------- 分镜卡片视图 ---------- */
+
+.shot-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.shot-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.shot-group__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.shot-group__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.shot-group__count {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.shot-group__foot {
+  display: flex;
+}
+
+.shot-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.shot-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shot-card__no {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.shot-card__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.shot-card__body {
+  display: grid;
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+}
+
+.shot-card__thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 120px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.shot-card__fields {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---------- 出场角色选择器 ---------- */
+
+.charchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.chip--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chip--unknown {
+  border-style: dashed;
+  color: var(--warn);
+}
