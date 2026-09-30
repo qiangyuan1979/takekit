@@ -4,6 +4,7 @@ pub mod error;
 pub mod project;
 pub mod refsheet;
 pub mod secrets;
+pub mod storyboard;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +25,11 @@ pub fn run() {
             commands::asset::delete_asset_files,
             commands::asset::delete_asset_dir,
             commands::asset::generate_asset_images,
+            commands::export::export_storyboard,
+            commands::export::import_storyboard,
+            commands::export::export_handover_pack,
+            commands::prompt::list_video_providers,
+            commands::prompt::translate_video_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

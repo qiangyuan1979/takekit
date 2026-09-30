@@ -8,12 +8,14 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   AssetKind,
+  ExportRecord,
   LlmChunk,
   LlmRequest,
   LlmResponse,
   LoadedProject,
   Project,
   RecentProject,
+  VideoParams,
 } from "./types";
 
 /** 与 Rust `AppError` 的序列化形状一致。 */
@@ -42,6 +44,33 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   } catch (error) {
     throw toApiError(error);
   }
+}
+
+/** 统一视频请求：拼好的提示词 + 参数，交给后端适配器翻译。 */
+export interface VideoRequest {
+  prompt: string;
+  params: VideoParams;
+}
+
+/** 适配器翻译结果：provider 名、厂商请求体、翻译过程中的降级说明。 */
+export interface Translated {
+  provider: string;
+  body: unknown;
+  notes: string[];
+}
+
+/** 分镜表导入结果：覆盖后的项目 + 覆盖/跳过行数。 */
+export interface ImportOutcome {
+  project: Project;
+  updated: number;
+  skipped: number;
+}
+
+/** 交接包产物：目录、导出记录、包内相对文件清单。 */
+export interface HandoverOutcome {
+  dir: string;
+  record: ExportRecord;
+  files: string[];
 }
 
 /** 一次性生图的传输形态，字段名与 Rust `GenerateImageArgs` 一致。 */
@@ -105,4 +134,25 @@ export const api = {
     ownerId: string,
     request: GenerateImageRequest,
   ) => call<string[]>("generate_asset_images", { projectPath, kind, ownerId, request }),
+
+  // ---- 出题 / 导出（M6） ----
+
+  /** 当前支持的视频厂商（`kling` / `jimeng`）。 */
+  listVideoProviders: () => call<string[]>("list_video_providers"),
+
+  /** 把统一请求翻译成该家请求体；M6 只做纯翻译，不发 HTTP。 */
+  translateVideoRequest: (provider: string, model: string, request: VideoRequest) =>
+    call<Translated>("translate_video_request", { provider, model, request }),
+
+  /** 导出分镜表，`format` 取 `csv` / `json` / `xlsx`；返回导出记录。 */
+  exportStoryboard: (project: Project, format: string, destPath: string) =>
+    call<ExportRecord>("export_storyboard", { project, format, destPath }),
+
+  /** 导入分镜表覆盖项目；返回覆盖后的项目与覆盖/跳过行数。 */
+  importStoryboard: (project: Project, sourcePath: string) =>
+    call<ImportOutcome>("import_storyboard", { project, sourcePath }),
+
+  /** 导出交接包到目录；返回目录、导出记录与包内文件清单。 */
+  exportHandoverPack: (projectPath: string, project: Project, destDir: string) =>
+    call<HandoverOutcome>("export_handover_pack", { projectPath, project, destDir }),
 };

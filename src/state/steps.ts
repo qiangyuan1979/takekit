@@ -6,6 +6,7 @@
  */
 
 import { pendingKeyframeIssues } from "../lib/frameOps";
+import { shotsWithoutPrompt } from "../lib/promptOps";
 import type { Meta, Project } from "../lib/types";
 import { undefinedCharacterRefs } from "../lib/scriptOps";
 
@@ -73,7 +74,7 @@ export const STEPS: readonly StepDef[] = [
     label: "出题",
     goal: "把分镜字段自动拼装成各家模型可用的提示词与参数",
     tip: "别手写提示词，先让系统拼一版再改",
-    ready: false,
+    ready: true,
   },
   {
     id: "generate",
@@ -195,8 +196,22 @@ function checkKeyframes(project: Project): GuardResult {
 }
 
 /**
+ * 第 6 步验收：每个镜头都得先出过一版提示词，否则第 7 步生成无从提交。
+ *
+ * 只卡"出没出过题"这一件事：提示词体检（缺主体、过长、自相矛盾）只作提示、
+ * 不作阻塞——新手常常先拼一版再改，硬拦会打断"先跑通流程"的节奏。
+ */
+function checkPrompt(project: Project): GuardResult {
+  const pending = shotsWithoutPrompt(project);
+  if (pending.length === 0) return { ok: true, issues: [] };
+  const shown = pending.slice(0, 5).join("、");
+  const more = pending.length > 5 ? ` 等 ${pending.length} 镜` : "";
+  return { ok: false, issues: [`这些镜头还没出题：${shown}${more}（可点「整集出题」一键补齐）`] };
+}
+
+/**
  * 进入下一步前的阻塞检查。尚未实现的环节一律放行，
- * 待各自的里程碑补齐校验规则（M6 出题、M7 生成……）。
+ * 待各自的里程碑补齐校验规则（M7 生成……）。
  */
 export function checkStep(step: StepId, project: Project | null): GuardResult {
   if (!project) return { ok: false, issues: ["还没有新建或打开项目"] };
@@ -211,6 +226,8 @@ export function checkStep(step: StepId, project: Project | null): GuardResult {
       return checkStoryboard(project);
     case "keyframes":
       return checkKeyframes(project);
+    case "prompt":
+      return checkPrompt(project);
     default:
       return { ok: true, issues: [] };
   }

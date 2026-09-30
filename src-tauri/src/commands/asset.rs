@@ -240,7 +240,7 @@ fn to_relative(root: &Path, path: &Path) -> AppResult<String> {
 }
 
 /// 项目相对路径 → 绝对路径；拒绝绝对路径与 `..` 穿越。
-fn resolve_relative(root: &Path, relative: &str) -> AppResult<PathBuf> {
+pub(crate) fn resolve_relative(root: &Path, relative: &str) -> AppResult<PathBuf> {
     let candidate = Path::new(relative);
     let escapes = candidate.is_absolute()
         || candidate.components().any(|c| {
@@ -259,7 +259,7 @@ fn resolve_relative(root: &Path, relative: &str) -> AppResult<PathBuf> {
 }
 
 /// 路径扩展名（小写，无扩展名时为空串）。
-fn extension_of(path: &Path) -> String {
+pub(crate) fn extension_of(path: &Path) -> String {
     path.extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase())

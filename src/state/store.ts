@@ -40,9 +40,11 @@ import {
   type AssetKind,
   type Character,
   type Episode,
+  type ExportRecord,
   type FrameRole,
   type Meta,
   type Project,
+  type PromptBundle,
   type Prop,
   type RecentProject,
   type Scene,
@@ -290,6 +292,27 @@ export interface AppState {
     role: FrameRole,
     refShotId: string | null,
   ) => void;
+
+  // ---- 出题（M6） ----
+
+  /** 写回某镜的出题结果；传 `null` 即清空（上游信息改了可重出）。 */
+  setShotPromptBundle: (
+    episodeId: string,
+    sceneId: string,
+    shotId: string,
+    bundle: PromptBundle | null,
+  ) => void;
+  /** 在已有 bundle 上做局部修改：改参数、缓存各家请求体预览都走这里。 */
+  updateShotPrompt: (
+    episodeId: string,
+    sceneId: string,
+    shotId: string,
+    change: (bundle: PromptBundle) => PromptBundle,
+  ) => void;
+  /** 导出成功后登记一条记录（文件已落盘，这里只补引用）。 */
+  addExportRecord: (record: ExportRecord) => void;
+  /** 分镜表导入返回覆盖后的项目：整体替换（导入是"以文件为准"的显式操作）。 */
+  applyStoryboardImport: (project: Project) => void;
 }
 
 export const useAppStore = create<AppState>()((set, get) => {
@@ -787,5 +810,28 @@ export const useAppStore = create<AppState>()((set, get) => {
           updateFrame(shot, role, (frame) => assignRefShot(frame, refShotId)),
         ),
       ),
+
+    // ---- 出题（M6） ----
+
+    setShotPromptBundle: (episodeId, sceneId, shotId, bundle) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) => ({
+          ...shot,
+          promptBundle: bundle,
+        })),
+      ),
+
+    updateShotPrompt: (episodeId, sceneId, shotId, change) =>
+      mutate((project) =>
+        replaceShot(project, episodeId, sceneId, shotId, (shot) =>
+          // 还没出题就什么都不做，避免"改参数"顺手造出一个半成品 bundle。
+          shot.promptBundle ? { ...shot, promptBundle: change(shot.promptBundle) } : shot,
+        ),
+      ),
+
+    addExportRecord: (record) =>
+      mutate((project) => ({ ...project, exports: [...project.exports, record] })),
+
+    applyStoryboardImport: (imported) => mutate(() => imported),
   };
 });

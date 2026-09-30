@@ -8,6 +8,7 @@
 
 pub mod image;
 pub mod llm;
+pub mod video;
 
 use crate::error::AppError;
 

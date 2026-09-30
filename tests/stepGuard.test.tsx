@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { StepGuard } from "../src/components/StepGuard";
+import { buildPromptBundle } from "../src/lib/promptOps";
 import { makeEpisode, makeScene } from "../src/lib/scriptOps";
 import { makeShot } from "../src/lib/shotOps";
 import { defaultScript } from "../src/lib/types";
@@ -148,6 +149,53 @@ describe("checkStep('storyboard')", () => {
     );
 
     expect(checkStep("storyboard", project).ok).toBe(true);
+  });
+});
+
+describe("checkStep('prompt')", () => {
+  /** 一集一场，`shots` 为这一场的镜头。 */
+  function projectWithShots(shots: ReturnType<typeof makeShot>[]): ReturnType<typeof makeProject> {
+    return makeProject(
+      {},
+      {
+        episodes: [
+          makeEpisode(1, { id: "ep-1", scenes: [makeScene({ id: "s-1", no: 1, shots })] }),
+        ],
+      },
+    );
+  }
+
+  it("有镜头还没出题时不放行，并点名是哪一集哪一场哪一镜", () => {
+    const project = projectWithShots([makeShot({ episodeId: "ep-1", sceneId: "s-1", no: 1 })]);
+
+    const result = checkStep("prompt", project);
+
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]).toContain("第 1 集 第 1 场 · 镜 1");
+    expect(result.issues.join()).toContain("整集出题");
+  });
+
+  it("待出题的镜头超过 5 个时补一句总数", () => {
+    const shots = Array.from({ length: 6 }, (_, index) =>
+      makeShot({ episodeId: "ep-1", sceneId: "s-1", no: index + 1 }),
+    );
+
+    const result = checkStep("prompt", projectWithShots(shots));
+
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]).toContain("等 6 镜");
+  });
+
+  it("每一镜都出过题后放行", () => {
+    const shot = makeShot({ episodeId: "ep-1", sceneId: "s-1", no: 1 });
+    const scene = makeScene({ id: "s-1", no: 1, shots: [shot] });
+    const episode = makeEpisode(1, { id: "ep-1", scenes: [scene] });
+    const base = makeProject({}, { episodes: [episode] });
+    const bundle = buildPromptBundle({ project: base, episode, scene, shot });
+
+    const project = projectWithShots([{ ...shot, promptBundle: bundle }]);
+
+    expect(checkStep("prompt", project).ok).toBe(true);
   });
 });
 

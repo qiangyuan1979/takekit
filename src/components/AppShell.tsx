@@ -14,6 +14,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { AssetsWorkspace } from "./assets/AssetsWorkspace";
 import { KeyframesWorkspace } from "./keyframes/KeyframesWorkspace";
 import { ProjectPanel } from "./panels/ProjectPanel";
+import { PromptsWorkspace } from "./prompts/PromptsWorkspace";
 import { ScriptWorkspace } from "./script/ScriptWorkspace";
 import { SettingsPanel } from "./SettingsPanel";
 import { StepGuard } from "./StepGuard";
@@ -208,6 +209,8 @@ export function AppShell() {
                 <StoryboardWorkspace />
               ) : step.id === "keyframes" ? (
                 <KeyframesWorkspace />
+              ) : step.id === "prompt" ? (
+                <PromptsWorkspace />
               ) : (
                 <StepPlaceholder stepId={step.id} />
               )}
