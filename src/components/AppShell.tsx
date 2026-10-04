@@ -15,6 +15,7 @@ import { useAppStore } from "../state/store";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { AssetsWorkspace } from "./assets/AssetsWorkspace";
 import { GenerateWorkspace } from "./generate/GenerateWorkspace";
+import { PostWorkspace } from "./post/PostWorkspace";
 import { KeyframesWorkspace } from "./keyframes/KeyframesWorkspace";
 import { MaterialLibrary } from "./MaterialLibrary";
 import { OnboardingCard } from "./OnboardingCard";
@@ -313,6 +314,8 @@ export function AppShell() {
                 <PromptsWorkspace />
               ) : step.id === "generate" ? (
                 <GenerateWorkspace />
+              ) : step.id === "post" ? (
+                <PostWorkspace />
               ) : (
                 <StepPlaceholder stepId={step.id} />
               )}

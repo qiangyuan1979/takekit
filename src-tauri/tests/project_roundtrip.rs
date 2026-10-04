@@ -195,6 +195,90 @@ fn sample_project() -> Project {
         locked_fields: vec!["logline".into()],
     };
 
+    let post = Post {
+        voice_lines: vec![VoiceLine {
+            id: "voice-1".into(),
+            episode_id: "ep-1".into(),
+            scene_id: "scene-1".into(),
+            shot_id: "shot-1".into(),
+            shot_no: 3,
+            character_id: "char-1".into(),
+            text: "我不需要你的怜悯。".into(),
+            is_narration: false,
+            voice: "女声·清冷".into(),
+            emotion: "克制".into(),
+            speed: 1.1,
+            pause_ms: 250,
+            audio_path: Some("voice/ep-1/voice-1.wav".into()),
+            duration_ms: 2_400,
+        }],
+        subtitles: vec![SubtitleCue {
+            id: "sub-1".into(),
+            episode_id: "ep-1".into(),
+            voice_line_id: "voice-1".into(),
+            shot_id: "shot-1".into(),
+            shot_no: 3,
+            text: "我不需要你的怜悯。".into(),
+            start_ms: 1_200,
+            end_ms: 3_600,
+            enabled: true,
+        }],
+        subtitle_style: SubtitleStyle {
+            preset: "竖屏安全".into(),
+            font: "阿里巴巴普惠体".into(),
+            font_size: 52,
+            color: "#FFF7E6".into(),
+            outline_color: "#1A1A1A".into(),
+            outline_width: 3,
+            position: "bottom".into(),
+            safe_margin_percent: 15,
+            burn_in: true,
+        },
+        bgm: Some(BgmTrack {
+            material_id: "mat-bgm-1".into(),
+            name: "都市夜色".into(),
+            path: "materials/bgm/urban-night.mp3".into(),
+            volume: 60,
+            ducking: true,
+            duck_volume: 25,
+            looping: true,
+        }),
+        sfx: vec![SfxCue {
+            id: "sfx-1".into(),
+            episode_id: "ep-1".into(),
+            shot_id: "shot-1".into(),
+            shot_no: 3,
+            hint: "雨声 + 远处雷鸣".into(),
+            material_id: "mat-sfx-rain".into(),
+            path: "materials/sfx/rain.mp3".into(),
+            at_ms: 1_000,
+            volume: 80,
+        }],
+        timeline: vec![TimelineClip {
+            id: "tl-1".into(),
+            episode_id: "ep-1".into(),
+            scene_id: "scene-1".into(),
+            shot_id: "shot-1".into(),
+            shot_no: 3,
+            clip_path: "clips/003_01.mp4".into(),
+            start_ms: 0,
+            duration_ms: 4_500,
+            transition: Transition::Dissolve,
+        }],
+        lipsync: vec![LipsyncCue {
+            id: "lipsync-1".into(),
+            episode_id: "ep-1".into(),
+            shot_id: "shot-1".into(),
+            shot_no: 3,
+            voice_line_id: "voice-1".into(),
+            clip_path: "clips/003_01.mp4".into(),
+            audio_path: "voice/ep-1/voice-1.wav".into(),
+            enabled: true,
+            reason: "front_face".into(),
+        }],
+        export_preset: "douyin".into(),
+    };
+
     Project {
         schema_version: SCHEMA_VERSION,
         id: "proj-1".into(),
@@ -216,6 +300,7 @@ fn sample_project() -> Project {
             path: "exports/final.mp4".into(),
             created_at: "2026-09-29T10:00:00Z".into(),
         }],
+        post,
     }
 }
 
@@ -342,6 +427,37 @@ fn project_json_uses_camel_case_keys() {
         value["assets"]["characters"][0]["appearance"]["faceShape"],
         "鹅蛋脸"
     );
+
+    // 后期段（spec §5.8）
+    for key in [
+        "voiceLines",
+        "subtitles",
+        "subtitleStyle",
+        "bgm",
+        "sfx",
+        "timeline",
+        "lipsync",
+        "exportPreset",
+    ] {
+        assert!(
+            value["post"].get(key).is_some(),
+            "post.{key} must be camelCase"
+        );
+    }
+    assert_eq!(value["post"]["voiceLines"][0]["shotNo"], 3);
+    assert_eq!(value["post"]["voiceLines"][0]["isNarration"], false);
+    assert_eq!(
+        value["post"]["voiceLines"][0]["audioPath"],
+        "voice/ep-1/voice-1.wav"
+    );
+    assert_eq!(value["post"]["subtitles"][0]["startMs"], 1_200);
+    assert_eq!(value["post"]["subtitleStyle"]["safeMarginPercent"], 15);
+    assert_eq!(value["post"]["subtitleStyle"]["burnIn"], true);
+    assert_eq!(value["post"]["bgm"]["duckVolume"], 25);
+    assert_eq!(value["post"]["timeline"][0]["clipPath"], "clips/003_01.mp4");
+    assert_eq!(value["post"]["timeline"][0]["transition"], "dissolve");
+    assert_eq!(value["post"]["lipsync"][0]["voiceLineId"], "voice-1");
+    assert_eq!(value["post"]["exportPreset"], "douyin");
 }
 
 #[test]
@@ -367,6 +483,7 @@ fn enum_literals_are_stable() {
         (json!(TaskKind::Llm), "llm"),
         (json!(TaskKind::Image), "image"),
         (json!(TaskKind::Video), "video"),
+        (json!(TaskKind::Tts), "tts"),
         (json!(TaskStatus::Queued), "queued"),
         (json!(TaskStatus::Canceled), "canceled"),
     ];

@@ -41,6 +41,9 @@ pub fn run() {
             commands::generate::list_video_generators,
             commands::generate::generate_clips,
             commands::generate::cancel_clip_tasks,
+            commands::tts::list_tts_generators,
+            commands::tts::generate_voice_lines,
+            commands::tts::cancel_voice_tasks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

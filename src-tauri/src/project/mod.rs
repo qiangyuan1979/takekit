@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// 当前 schema 版本。结构发生不兼容变更时递增，并在 `migrate.rs` 补迁移步骤。
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// 新建实体 ID。
 pub fn new_id() -> String {
@@ -153,6 +153,8 @@ pub enum TaskKind {
     Llm,
     Image,
     Video,
+    /// 配音（TTS，M9）。
+    Tts,
 }
 
 /// 任务状态。
@@ -688,6 +690,274 @@ pub struct ExportRecord {
     pub created_at: String,
 }
 
+// ---------- 后期出片（spec §5.8，M9） ----------
+//
+// 设计取舍：应用自身不调用 ffmpeg（跨平台二进制体积 / 网络下载风险），
+// 而是把"片段轨 / 配音轨 / 字幕轨 / BGM 轨"落成结构化时间线，
+// 再由 `commands::post` 导出可直接运行的剪辑工程包。以下结构即该工程包的数据源。
+
+/// 配音句（spec §5.8.1）。
+///
+/// 由剧本台词 / 旁白派生，一句一条；`audio_path` 为采用后的音频文件
+/// （项目相对路径，正斜杠）。对白与旁白用 `is_narration` 分轨。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct VoiceLine {
+    pub id: String,
+    pub episode_id: String,
+    pub scene_id: String,
+    pub shot_id: String,
+    /// 全局镜号（跨集连续），冗余保存便于工程包直读。
+    pub shot_no: u32,
+    /// 角色 id；旁白为空。
+    pub character_id: String,
+    pub text: String,
+    pub is_narration: bool,
+    /// 音色（生成时取自角色卡，快照保存，改角色卡不影响已生成句）。
+    pub voice: String,
+    /// 情绪标注（如"平静 / 激动"），拼进 TTS 请求。
+    pub emotion: String,
+    /// 语速倍率（0.5–2.0）。
+    pub speed: f64,
+    /// 句尾停顿时长（毫秒），参与字幕与时间线对齐。
+    pub pause_ms: u64,
+    /// 采用的音频（项目相对路径）。
+    pub audio_path: Option<String>,
+    /// 采用音频的实测时长（毫秒，生成后回填）。
+    pub duration_ms: u64,
+}
+
+impl Default for VoiceLine {
+    fn default() -> Self {
+        Self {
+            id: new_id(),
+            episode_id: String::new(),
+            scene_id: String::new(),
+            shot_id: String::new(),
+            shot_no: 0,
+            character_id: String::new(),
+            text: String::new(),
+            is_narration: false,
+            voice: String::new(),
+            emotion: String::new(),
+            speed: 1.0,
+            pause_ms: 0,
+            audio_path: None,
+            duration_ms: 0,
+        }
+    }
+}
+
+/// 字幕句（spec §5.8.3）。
+///
+/// 时间轴为全集内毫秒偏移；由配音句派生，可逐句微调起止时间。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SubtitleCue {
+    pub id: String,
+    pub episode_id: String,
+    /// 关联配音句 id；纯手工字幕为空。
+    pub voice_line_id: String,
+    pub shot_id: String,
+    pub shot_no: u32,
+    pub text: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub enabled: bool,
+}
+
+impl Default for SubtitleCue {
+    fn default() -> Self {
+        Self {
+            id: new_id(),
+            episode_id: String::new(),
+            voice_line_id: String::new(),
+            shot_id: String::new(),
+            shot_no: 0,
+            text: String::new(),
+            start_ms: 0,
+            end_ms: 0,
+            enabled: true,
+        }
+    }
+}
+
+/// 字幕样式模板（spec §5.8.3）。内置默认值贴合竖屏安全区。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SubtitleStyle {
+    /// 预设名（默认 / 描边 / 竖屏安全）。
+    pub preset: String,
+    pub font: String,
+    pub font_size: u32,
+    /// 主色，`#RRGGBB`。
+    pub color: String,
+    pub outline_color: String,
+    pub outline_width: u32,
+    /// 位置：`bottom` / `center` / `top`。
+    pub position: String,
+    /// 竖屏安全区：距最近边的百分比。
+    pub safe_margin_percent: u32,
+    /// 是否把字幕烧制进画面（false 则只出软字幕）。
+    pub burn_in: bool,
+}
+
+impl Default for SubtitleStyle {
+    fn default() -> Self {
+        Self {
+            preset: "默认".into(),
+            font: "思源黑体".into(),
+            font_size: 48,
+            color: "#FFFFFF".into(),
+            outline_color: "#000000".into(),
+            outline_width: 2,
+            position: "bottom".into(),
+            safe_margin_percent: 12,
+            burn_in: false,
+        }
+    }
+}
+
+/// BGM 轨（spec §5.8.4）。全片一条，从素材库选曲。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct BgmTrack {
+    /// 素材库条目 id（为空表示手工路径）。
+    pub material_id: String,
+    pub name: String,
+    /// 项目相对路径或素材绝对路径。
+    pub path: String,
+    /// 正常音量（0–100）。
+    pub volume: u32,
+    /// 是否开启对白音量闪避。
+    pub ducking: bool,
+    /// 闪避时压低到的音量（0–100）。
+    pub duck_volume: u32,
+    /// 是否循环铺满全片。
+    pub looping: bool,
+}
+
+/// 音效挂接（spec §5.8.4）。分镜「音效提示」字段一键挂接素材库音效。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SfxCue {
+    pub id: String,
+    pub episode_id: String,
+    pub shot_id: String,
+    pub shot_no: u32,
+    /// 分镜「音效提示」原文，保留以便人工核对。
+    pub hint: String,
+    pub material_id: String,
+    pub path: String,
+    /// 触发时间（全集时间轴毫秒）。
+    pub at_ms: u64,
+    pub volume: u32,
+}
+
+impl Default for SfxCue {
+    fn default() -> Self {
+        Self {
+            id: new_id(),
+            episode_id: String::new(),
+            shot_id: String::new(),
+            shot_no: 0,
+            hint: String::new(),
+            material_id: String::new(),
+            path: String::new(),
+            at_ms: 0,
+            volume: 100,
+        }
+    }
+}
+
+/// 时间线片段（片段轨，spec §5.8.5）。按镜序拼接，转场取自分镜字段。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TimelineClip {
+    pub id: String,
+    pub episode_id: String,
+    pub scene_id: String,
+    pub shot_id: String,
+    pub shot_no: u32,
+    /// 采用的片段（项目相对路径）。
+    pub clip_path: String,
+    /// 全集时间轴起始（毫秒）。
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    /// 本片段的出场转场（取自 `Shot.transition`）。
+    pub transition: Transition,
+}
+
+impl Default for TimelineClip {
+    fn default() -> Self {
+        Self {
+            id: new_id(),
+            episode_id: String::new(),
+            scene_id: String::new(),
+            shot_id: String::new(),
+            shot_no: 0,
+            clip_path: String::new(),
+            start_ms: 0,
+            duration_ms: 0,
+            transition: Transition::default(),
+        }
+    }
+}
+
+/// 对口型清单项（spec §5.8.2）。
+///
+/// 应用不内置对口型模型，故只产出「采用片段 + 该句配音」的配对清单，
+/// 随工程包交给外部工具（或后续接入 provider）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LipsyncCue {
+    pub id: String,
+    pub episode_id: String,
+    pub shot_id: String,
+    pub shot_no: u32,
+    /// 关联配音句 id。
+    pub voice_line_id: String,
+    /// 采用的片段（项目相对路径）。
+    pub clip_path: String,
+    /// 配音音频（项目相对路径）。
+    pub audio_path: String,
+    /// 是否启用（仅角色正面口型镜头启用）。
+    pub enabled: bool,
+    /// 由哪个线索判定启用（如 `front_face`），便于 UI 说明。
+    pub reason: String,
+}
+
+impl Default for LipsyncCue {
+    fn default() -> Self {
+        Self {
+            id: new_id(),
+            episode_id: String::new(),
+            shot_id: String::new(),
+            shot_no: 0,
+            voice_line_id: String::new(),
+            clip_path: String::new(),
+            audio_path: String::new(),
+            enabled: true,
+            reason: String::new(),
+        }
+    }
+}
+
+/// 后期出片数据根（spec §5.8）。挂到 `Project.post`。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Post {
+    pub voice_lines: Vec<VoiceLine>,
+    pub subtitles: Vec<SubtitleCue>,
+    pub subtitle_style: SubtitleStyle,
+    pub bgm: Option<BgmTrack>,
+    pub sfx: Vec<SfxCue>,
+    pub timeline: Vec<TimelineClip>,
+    pub lipsync: Vec<LipsyncCue>,
+    /// 导出预设 id（`douyin` / `bilibili` 等）。
+    pub export_preset: String,
+}
+
 // ---------- 项目根 ----------
 
 /// 项目根结构，`project.json` 的唯一真相源。
@@ -721,6 +991,8 @@ pub struct Project {
     pub template_refs: Vec<TemplateRef>,
     #[serde(default)]
     pub exports: Vec<ExportRecord>,
+    #[serde(default)]
+    pub post: Post,
 }
 
 impl Default for Project {
@@ -750,6 +1022,7 @@ impl Project {
             tasks: Vec::new(),
             template_refs: Vec::new(),
             exports: Vec::new(),
+            post: Post::default(),
         }
     }
 

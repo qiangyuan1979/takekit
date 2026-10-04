@@ -9,6 +9,7 @@ pub mod project;
 pub mod prompt;
 pub mod settings;
 pub mod template;
+pub mod tts;
 
 use crate::error::{AppError, AppResult};
 use std::path::PathBuf;

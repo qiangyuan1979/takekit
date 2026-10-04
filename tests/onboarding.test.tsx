@@ -11,6 +11,7 @@ const ipc = vi.hoisted(() => ({
     getSettings: vi.fn(),
     listRecentProjects: vi.fn(),
     listTemplates: vi.fn(),
+    listTtsGenerators: vi.fn(),
   },
   toApiError: vi.fn((value: unknown) => value),
 }));
@@ -49,6 +50,7 @@ beforeEach(() => {
   ipc.api.getSettings.mockResolvedValue(defaultSettings());
   ipc.api.listRecentProjects.mockResolvedValue([]);
   ipc.api.listTemplates.mockResolvedValue([]);
+  ipc.api.listTtsGenerators.mockResolvedValue([]);
 });
 
 afterEach(cleanup);

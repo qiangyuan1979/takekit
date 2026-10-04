@@ -5,7 +5,7 @@
  * 序列化结果，这里改动必须同步改 Rust 并递增 `schemaVersion`。
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // ---------- 枚举（字面量与 Rust serde 输出一致） ----------
 
@@ -17,7 +17,7 @@ export type CameraMove =
   "static_shot" | "push_in" | "pull_out" | "pan" | "truck" | "follow" | "crane" | "orbit";
 export type Transition = "cut" | "dissolve" | "fade_in" | "fade_out" | "whip_pan";
 export type FrameRole = "first" | "last";
-export type TaskKind = "llm" | "image" | "video";
+export type TaskKind = "llm" | "image" | "video" | "tts";
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export const ASPECT_RATIOS: AspectRatio[] = ["9:16", "16:9", "1:1"];
@@ -303,6 +303,191 @@ export interface ExportRecord {
   createdAt: string;
 }
 
+// ---------- 后期出片（M9，镜像 Rust `project/mod.rs` 的 Post 系列） ----------
+
+/** 配音句（spec §5.8.1）；`audioPath` 为采用后的音频（项目相对路径）。 */
+export interface VoiceLine {
+  id: string;
+  episodeId: string;
+  sceneId: string;
+  shotId: string;
+  /** 全局镜号（跨集连续）。 */
+  shotNo: number;
+  /** 角色 id；旁白为空。 */
+  characterId: string;
+  text: string;
+  isNarration: boolean;
+  /** 音色（生成时快照，改角色卡不影响已生成句）。 */
+  voice: string;
+  emotion: string;
+  /** 语速倍率（0.5–2.0）。 */
+  speed: number;
+  /** 句尾停顿（毫秒）。 */
+  pauseMs: number;
+  audioPath: string | null;
+  /** 采用音频的实测时长（毫秒）。 */
+  durationMs: number;
+}
+
+export interface SubtitleCue {
+  id: string;
+  episodeId: string;
+  /** 关联配音句 id；纯手工字幕为空。 */
+  voiceLineId: string;
+  shotId: string;
+  shotNo: number;
+  text: string;
+  startMs: number;
+  endMs: number;
+  enabled: boolean;
+}
+
+export type SubtitlePosition = "bottom" | "center" | "top";
+
+export const SUBTITLE_POSITIONS: SubtitlePosition[] = ["bottom", "center", "top"];
+
+export interface SubtitleStyle {
+  preset: string;
+  font: string;
+  fontSize: number;
+  /** 主色，`#RRGGBB`。 */
+  color: string;
+  outlineColor: string;
+  outlineWidth: number;
+  position: SubtitlePosition;
+  /** 竖屏安全区：距最近边的百分比。 */
+  safeMarginPercent: number;
+  burnIn: boolean;
+}
+
+/** 与 Rust `SubtitleStyle::default()` 一致。 */
+export function defaultSubtitleStyle(): SubtitleStyle {
+  return {
+    preset: "默认",
+    font: "思源黑体",
+    fontSize: 48,
+    color: "#FFFFFF",
+    outlineColor: "#000000",
+    outlineWidth: 2,
+    position: "bottom",
+    safeMarginPercent: 12,
+    burnIn: false,
+  };
+}
+
+export interface BgmTrack {
+  /** 素材库条目 id；为空表示手工路径。 */
+  materialId: string;
+  name: string;
+  /** 项目相对路径或素材绝对路径。 */
+  path: string;
+  /** 正常音量（0–100）。 */
+  volume: number;
+  ducking: boolean;
+  /** 闪避时压低到的音量（0–100）。 */
+  duckVolume: number;
+  looping: boolean;
+}
+
+export interface SfxCue {
+  id: string;
+  episodeId: string;
+  shotId: string;
+  shotNo: number;
+  /** 分镜「音效提示」原文。 */
+  hint: string;
+  materialId: string;
+  path: string;
+  /** 触发时间（全集时间轴毫秒）。 */
+  atMs: number;
+  volume: number;
+}
+
+export interface TimelineClip {
+  id: string;
+  episodeId: string;
+  sceneId: string;
+  shotId: string;
+  shotNo: number;
+  /** 采用的片段（项目相对路径）。 */
+  clipPath: string;
+  /** 全集时间轴起始（毫秒）。 */
+  startMs: number;
+  durationMs: number;
+  transition: Transition;
+}
+
+export interface LipsyncCue {
+  id: string;
+  episodeId: string;
+  shotId: string;
+  shotNo: number;
+  voiceLineId: string;
+  clipPath: string;
+  audioPath: string;
+  enabled: boolean;
+  /** 判定启用的线索（如 `front_face`）。 */
+  reason: string;
+}
+
+/** 后期出片数据根；挂到 `Project.post`。 */
+export interface Post {
+  voiceLines: VoiceLine[];
+  subtitles: SubtitleCue[];
+  subtitleStyle: SubtitleStyle;
+  bgm: BgmTrack | null;
+  sfx: SfxCue[];
+  timeline: TimelineClip[];
+  lipsync: LipsyncCue[];
+  /** 导出预设 id（`douyin` / `bilibili` 等）。 */
+  exportPreset: string;
+}
+
+/** 与 Rust `Post::default()` 一致。 */
+export function defaultPost(): Post {
+  return {
+    voiceLines: [],
+    subtitles: [],
+    subtitleStyle: defaultSubtitleStyle(),
+    bgm: null,
+    sfx: [],
+    timeline: [],
+    lipsync: [],
+    exportPreset: "",
+  };
+}
+
+// ---------- 配音（M9，镜像 Rust `commands/tts.rs`） ----------
+
+export interface TtsRequest {
+  text: string;
+  voice: string;
+  emotion: string;
+  speed: number;
+}
+
+/** `generate_voice_lines` 的一条作业；字段名与 Rust `VoiceJob` 严格一致。 */
+export interface VoiceJob {
+  taskId: string;
+  voiceLineId: string;
+  request: TtsRequest;
+}
+
+/** 配音进度事件；字段名与 Rust `TtsEvent` 严格一致。 */
+export interface TtsEvent {
+  taskId: string;
+  voiceLineId: string;
+  status: TaskStatus;
+  /** 成功时为项目相对路径（如 `voice/<台词 id>.mp3`）。 */
+  audioPath?: string | null;
+  mime?: string | null;
+  /** 音频时长（毫秒）。 */
+  durationMs: number;
+  error?: string | null;
+  errorCode?: string | null;
+  errorArgs?: Record<string, string> | null;
+}
+
 // ---------- 模板库（M8） ----------
 
 /** 模板类别，字面量与 Rust `commands/template.rs` 的 `KINDS` 一致。 */
@@ -359,6 +544,7 @@ export interface Project {
   tasks: Task[];
   templateRefs: TemplateRef[];
   exports: ExportRecord[];
+  post: Post;
 }
 
 // ---------- 命令返回 / 设置 ----------

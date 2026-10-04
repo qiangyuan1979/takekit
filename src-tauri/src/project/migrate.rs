@@ -9,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use serde_json::Value;
 
 /// 当前代码支持的 schema 版本，与 `project::SCHEMA_VERSION` 保持一致。
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 /// 最早的、被承认的历史版本；缺失/非法版本号按它处理。
 ///
@@ -64,6 +64,7 @@ pub fn needs_migration(value: &Value) -> bool {
 fn step(from: u32, value: &mut Value) -> AppResult<u32> {
     match from {
         1 => step_1_to_2(value)?,
+        2 => step_2_to_3(value)?,
         _ => {}
     }
     Ok(from + 1)
@@ -75,6 +76,18 @@ fn step(from: u32, value: &mut Value) -> AppResult<u32> {
 fn step_1_to_2(value: &mut Value) -> AppResult<()> {
     if let Some(obj) = value.as_object_mut() {
         obj.entry("script")
+            .or_insert_with(|| Value::Object(Default::default()));
+    }
+    Ok(())
+}
+
+/// v2 → v3：新增 `post` 段（后期出片，spec §5.8）。
+///
+/// 同样只补缺失的键；空对象交由 `Post` 的字段默认值填充
+/// （字幕样式等默认值写在 `Default` 里，迁移不重复）。
+fn step_2_to_3(value: &mut Value) -> AppResult<()> {
+    if let Some(obj) = value.as_object_mut() {
+        obj.entry("post")
             .or_insert_with(|| Value::Object(Default::default()));
     }
     Ok(())

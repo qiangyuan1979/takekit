@@ -20,7 +20,9 @@ import type {
   Project,
   RecentProject,
   Template,
+  TtsEvent,
   VideoRequest,
+  VoiceJob,
 } from "./types";
 
 /** 与 Rust `AppError` 的序列化形状一致。 */
@@ -67,6 +69,13 @@ export interface ImportOutcome {
 
 /** 交接包产物：目录、导出记录、包内相对文件清单。 */
 export interface HandoverOutcome {
+  dir: string;
+  record: ExportRecord;
+  files: string[];
+}
+
+/** 剪辑工程包产物：目录、导出记录、包内相对文件清单。 */
+export interface PostPackOutcome {
   dir: string;
   record: ExportRecord;
   files: string[];
@@ -208,4 +217,36 @@ export const api = {
 
   /** 删除一条素材（连同实体文件），返回最新全量列表。 */
   deleteMaterial: (id: string) => call<Material[]>("delete_material", { id }),
+
+  // ---- 后期出片（M9） ----
+
+  /** 可用配音 provider：`openai` / `mock`（本地模拟，无 Key 也能跑通全流程）。 */
+  listTtsGenerators: () => call<string[]>("list_tts_generators"),
+
+  /**
+   * 跑一批配音任务：每个状态变化回调 `onEvent`，全部结束才 resolve。
+   * 返回值是终态快照（与 `jobs` 同序），用来兜住漏收的事件。
+   */
+  generateVoiceLines: async (
+    projectPath: string,
+    provider: string,
+    jobs: VoiceJob[],
+    onEvent: (event: TtsEvent) => void,
+  ): Promise<TtsEvent[]> => {
+    const channel = new Channel<TtsEvent>();
+    channel.onmessage = onEvent;
+    return call<TtsEvent[]>("generate_voice_lines", {
+      projectPath,
+      provider,
+      jobs,
+      onEvent: channel,
+    });
+  },
+
+  /** 请求取消若干配音任务（软取消：下一轮轮询时收尾）；返回登记数量。 */
+  cancelVoiceTasks: (taskIds: string[]) => call<number>("cancel_voice_tasks", { taskIds }),
+
+  /** 导出剪辑工程包到目录；返回目录、导出记录与包内文件清单。 */
+  exportPostPack: (projectPath: string, project: Project, destDir: string) =>
+    call<PostPackOutcome>("export_post_pack", { projectPath, project, destDir }),
 };

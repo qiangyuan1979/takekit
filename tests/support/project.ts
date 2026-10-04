@@ -1,9 +1,15 @@
-import { defaultMeta, defaultScript, type Meta, type Project } from "../../src/lib/types";
+import {
+  defaultMeta,
+  defaultPost,
+  defaultScript,
+  type Meta,
+  type Project,
+} from "../../src/lib/types";
 
 /** 测试用最小可用项目；`meta` 用于覆盖立项字段，`patch` 覆盖项目级字段。 */
 export function makeProject(meta: Partial<Meta> = {}, patch: Partial<Project> = {}): Project {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: "p-1",
     name: "测试项目",
     createdAt: "2026-09-29T00:00:00.000Z",
@@ -20,6 +26,7 @@ export function makeProject(meta: Partial<Meta> = {}, patch: Partial<Project> = 
     tasks: [],
     templateRefs: [],
     exports: [],
+    post: defaultPost(),
     ...patch,
   };
 }

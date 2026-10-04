@@ -57,6 +57,8 @@ pub struct AppSettings {
     pub llm_options: LlmOptions,
     pub image: ProviderConfig,
     pub video: ProviderConfig,
+    /// 语音合成接入配置（M9 配音）。
+    pub tts: ProviderConfig,
     pub language: String,
     /// 界面字体：空串=跟随系统，`sans`/`serif`/`kai`=内置字体栈，`font:<素材 id>`=素材库字体。
     pub ui_font: String,
@@ -74,6 +76,7 @@ impl Default for AppSettings {
             llm_options: LlmOptions::default(),
             image: ProviderConfig::default(),
             video: ProviderConfig::default(),
+            tts: ProviderConfig::default(),
             language: "zh-CN".into(),
             ui_font: String::new(),
             onboarding_enabled: true,
@@ -81,12 +84,13 @@ impl Default for AppSettings {
     }
 }
 
-/// 三个 provider 槽位与其密钥键名，避免在多处重复维护同一份名单。
-fn slots(settings: &AppSettings) -> [(&ProviderConfig, &'static str); 3] {
+/// 四个 provider 槽位与其密钥键名，避免在多处重复维护同一份名单。
+fn slots(settings: &AppSettings) -> [(&ProviderConfig, &'static str); 4] {
     [
         (&settings.llm, "llm"),
         (&settings.image, "image"),
         (&settings.video, "video"),
+        (&settings.tts, "tts"),
     ]
 }
 
@@ -104,6 +108,7 @@ pub fn get_settings(app: AppHandle) -> AppResult<AppSettings> {
         (&mut settings.llm, "llm"),
         (&mut settings.image, "image"),
         (&mut settings.video, "video"),
+        (&mut settings.tts, "tts"),
     ] {
         config.api_key = secrets.get(&api_key_key(slot))?.unwrap_or_default();
     }
@@ -130,6 +135,7 @@ pub fn save_settings(app: AppHandle, settings: AppSettings) -> AppResult<AppSett
     persisted.llm.api_key.clear();
     persisted.image.api_key.clear();
     persisted.video.api_key.clear();
+    persisted.tts.api_key.clear();
     let bytes = serde_json::to_vec_pretty(&persisted)?;
     atomic_write(&settings_file(&data), &bytes)?;
 
@@ -168,6 +174,15 @@ pub(crate) fn load_video_config(app: &AppHandle) -> AppResult<ProviderConfig> {
     let secrets = SecretStore::new(&data);
     settings.video.api_key = secrets.get(&api_key_key("video"))?.unwrap_or_default();
     Ok(settings.video)
+}
+
+/// 取当前语音合成接入配置（含密钥库里的 api_key），供 TTS 适配器建 generator。
+pub(crate) fn load_tts_config(app: &AppHandle) -> AppResult<ProviderConfig> {
+    let data = app_data_dir(app)?;
+    let mut settings = read_settings(&data)?;
+    let secrets = SecretStore::new(&data);
+    settings.tts.api_key = secrets.get(&api_key_key("tts"))?.unwrap_or_default();
+    Ok(settings.tts)
 }
 
 /// 读 `settings.json`；缺失或损坏时回落默认值（不阻塞启动）。

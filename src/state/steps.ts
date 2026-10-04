@@ -98,11 +98,10 @@ export const STEPS: readonly StepDef[] = [
     id: "post",
     no: 8,
     label: "后期",
-    goal: "配音、字幕、BGM 与成片导出",
-    tip: "v1.5 提供",
-    example: "配音 → 对字幕 → 铺 BGM → 导出竖屏成片（v1.5 提供）。",
-    ready: false,
-    disabled: true,
+    goal: "配音、对口型、字幕、BGM 与音效、四轨拼接，导出成片",
+    tip: "应用不直接渲染：产出剪辑工程包（时间线 + 字幕 + 配音/素材 + 可直接运行的 ffmpeg 脚本）",
+    example: "配音 → 对字幕 → 铺 BGM → 拼四轨 → 导出剪辑工程包，双击 render 脚本出片。",
+    ready: true,
   },
 ] as const;
 
@@ -242,9 +241,19 @@ function checkGenerate(project: Project): GuardResult {
 }
 
 /**
- * 进入下一步前的阻塞检查。尚未实现的环节一律放行，
- * 待各自的里程碑补齐校验规则（v1.5 后期……）。
+ * 第 8 步验收：时间线得先拼起来，否则工程包无片可导。
+ *
+ * 只卡"拼没拼"这一件事：配音、字幕、BGM 是否齐备交由后端在导出时做完整性校验，
+ * 不在这里拦——新手常先拼好四轨跑通导出，再回头补配音。
  */
+function checkPost(project: Project): GuardResult {
+  if (project.post.timeline.length === 0) {
+    return { ok: false, issues: ["还没有时间线：先在后期工作台把采用的片段拼成四轨时间线"] };
+  }
+  return { ok: true, issues: [] };
+}
+
+/** 进入下一步前的阻塞检查。 */
 export function checkStep(step: StepId, project: Project | null): GuardResult {
   if (!project) return { ok: false, issues: ["还没有新建或打开项目"] };
   switch (step) {
@@ -262,6 +271,8 @@ export function checkStep(step: StepId, project: Project | null): GuardResult {
       return checkPrompt(project);
     case "generate":
       return checkGenerate(project);
+    case "post":
+      return checkPost(project);
     default:
       return { ok: true, issues: [] };
   }

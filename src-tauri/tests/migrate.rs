@@ -90,6 +90,25 @@ fn v1_document_gains_default_script() {
 }
 
 #[test]
+fn v2_document_gains_default_post() {
+    // 旧文件没有 post 段：迁移后必须补出空对象，供 Post 字段默认值填充。
+    let migrated =
+        migrate::migrate_to_current(json!({ "schemaVersion": 2, "name": "旧项目" })).unwrap();
+    assert_eq!(migrated["schemaVersion"], json!(SCHEMA_VERSION));
+    assert!(
+        migrated["post"].is_object(),
+        "migration must insert a post object"
+    );
+
+    // 已有 post 内容必须原样保留，不被覆盖。
+    let kept = migrate::migrate_to_current(
+        json!({ "schemaVersion": 2, "post": { "exportPreset": "bilibili" } }),
+    )
+    .unwrap();
+    assert_eq!(kept["post"]["exportPreset"], "bilibili");
+}
+
+#[test]
 fn non_object_root_is_rejected() {
     for bad in [json!([1, 2, 3]), json!("text"), json!(42), Value::Null] {
         let err = migrate::migrate_to_current(bad).unwrap_err();

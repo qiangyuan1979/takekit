@@ -9,7 +9,7 @@ import { StepGuard } from "../src/components/StepGuard";
 import { buildPromptBundle } from "../src/lib/promptOps";
 import { makeEpisode, makeScene } from "../src/lib/scriptOps";
 import { makeShot } from "../src/lib/shotOps";
-import { defaultScript } from "../src/lib/types";
+import { defaultPost, defaultScript, type TimelineClip } from "../src/lib/types";
 import { checkStep } from "../src/state/steps";
 import { makeProject } from "./support/project";
 
@@ -53,9 +53,33 @@ describe("checkStep('project')", () => {
     expect(result.issues).toHaveLength(1);
   });
 
-  it("尚未实现的环节暂时一律放行", () => {
+  it("资产环节待补的角色都已建档后放行", () => {
     expect(checkStep("assets", makeProject()).ok).toBe(true);
-    expect(checkStep("post", makeProject()).ok).toBe(true);
+  });
+});
+
+describe("checkStep('post')", () => {
+  const clip: TimelineClip = {
+    id: "c-1",
+    episodeId: "ep-1",
+    sceneId: "s-1",
+    shotId: "shot-1",
+    shotNo: 1,
+    clipPath: "clips/001_01.mp4",
+    startMs: 0,
+    durationMs: 5000,
+    transition: "cut",
+  };
+
+  it("时间线为空时不放行，并指向后期工作台", () => {
+    const result = checkStep("post", makeProject());
+    expect(result.ok).toBe(false);
+    expect(result.issues[0]).toContain("后期工作台");
+  });
+
+  it("拼出时间线后放行", () => {
+    const project = makeProject({}, { post: { ...defaultPost(), timeline: [clip] } });
+    expect(checkStep("post", project).ok).toBe(true);
   });
 });
 

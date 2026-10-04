@@ -19,6 +19,7 @@ import {
 } from "../lib/frameOps";
 import { applyGenerateEvent, interruptedTasks, markInterrupted } from "../lib/generateOps";
 import { api, toApiError, type ApiError } from "../lib/ipc";
+import { applyTtsEvent, syncPost as buildPost } from "../lib/postOps";
 import {
   makeEpisode,
   makeScene,
@@ -47,6 +48,7 @@ import {
   type Material,
   type MaterialKind,
   type Meta,
+  type Post,
   type Project,
   type PromptBundle,
   type Prop,
@@ -58,6 +60,7 @@ import {
   type StyleLock,
   type Task,
   type Template,
+  type TtsEvent,
 } from "../lib/types";
 import type { StepId } from "./steps";
 
@@ -360,6 +363,15 @@ export interface AppState {
    * 打开项目后调用：进程重启后队列已经没了，不清洗就会永远卡在进度里。
    */
   markInterruptedTasks: () => number;
+
+  // ---- 后期（M9） ----
+
+  /** 改动 `project.post` 的通用入口：原样返回即视为无变化，不标脏。 */
+  setPost: (change: (post: Post) => Post) => void;
+  /** 配音进度事件写回：翻译成任务事件，并回填句子的音频路径与时长。 */
+  applyVoiceEvent: (event: TtsEvent) => void;
+  /** 一键同步：从分镜派生配音句 / 时间线 / 字幕 / 对口型（不动 BGM、音效与预设）。 */
+  syncPost: () => void;
 
   // ---- 模板库（M8） ----
 
@@ -971,6 +983,27 @@ export const useAppStore = create<AppState>()((set, get) => {
       mutate((current) => ({ ...current, tasks: markInterrupted(current.tasks) }));
       return count;
     },
+
+    // ---- 后期（M9） ----
+
+    setPost: (change) =>
+      mutate((project) => {
+        const post = change(project.post);
+        return post === project.post ? project : { ...project, post };
+      }),
+
+    applyVoiceEvent: (event) => {
+      const { project } = get();
+      if (!project) return;
+      const next = applyTtsEvent(project, event);
+      if (next !== project) mutate(() => next);
+    },
+
+    syncPost: () =>
+      mutate((project) => {
+        const post = buildPost(project);
+        return post === project.post ? project : { ...project, post };
+      }),
 
     // ---- 模板库（M8） ----
 
