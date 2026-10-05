@@ -44,6 +44,7 @@ pub fn run() {
             commands::tts::list_tts_generators,
             commands::tts::generate_voice_lines,
             commands::tts::cancel_voice_tasks,
+            commands::post::export_post_pack,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -5,6 +5,7 @@ pub mod export;
 pub mod generate;
 pub mod llm;
 pub mod material;
+pub mod post;
 pub mod project;
 pub mod prompt;
 pub mod settings;
