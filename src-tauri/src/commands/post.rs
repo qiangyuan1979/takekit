@@ -10,18 +10,19 @@
 //! 3. 先验完整性再落盘：时间线为空或引用的素材已丢失，就整个不导出，
 //!    免得留下一个"看着齐、其实放不出片"的目录。
 //!
-//! 不复制媒体：片段动辄上百 MB，复制既慢又占地。脚本按 `ROOT`（导出时的项目根）
-//! 去找素材，`materials.csv` 供换台机器时按清单放回原位。
+//! 默认不复制媒体：片段动辄上百 MB，复制既慢又占地。脚本按 `ROOT`（导出时的项目根）
+//! 去找素材，`materials.csv` 供换台机器时按清单放回原位。需要「整包搬走」时可以
+//! 打开 `self_contained`：把被引用的媒体复制进包内 `media/`，脚本改用包内相对路径。
 
-use crate::commands::asset::resolve_relative;
+use crate::commands::asset::{extension_of, resolve_relative};
 use crate::commands::project::resolve_project_path;
 use crate::error::{AppError, AppResult};
 use crate::project::{
     new_id, now_iso, BgmTrack, ExportRecord, LipsyncCue, Project, SfxCue, SubtitleCue,
     SubtitleStyle, TimelineClip, Transition, VoiceLine,
 };
-use serde::Serialize;
-use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,11 +30,23 @@ use std::path::{Path, PathBuf};
 const TIMELINE_JSON: &str = "timeline.json";
 const SUBTITLES_SRT: &str = "subtitles.srt";
 const SUBTITLES_ASS: &str = "subtitles.ass";
+const SUBTITLES_VTT: &str = "subtitles.vtt";
+const SCRIPT_LINES: &str = "lines.txt";
+const TIMELINE_EDL: &str = "timeline.edl";
 const MATERIALS_CSV: &str = "materials.csv";
 const RENDER_SH: &str = "render.sh";
 const RENDER_BAT: &str = "render.bat";
+const RENDER_STEMS_SH: &str = "render_stems.sh";
+const RENDER_STEMS_BAT: &str = "render_stems.bat";
 const MANIFEST_JSON: &str = "manifest.json";
 const README_TXT: &str = "README.txt";
+
+/// 自带媒体时，包内媒体目录与分轨音频名字。
+const MEDIA_DIR: &str = "media";
+const STEM_VOICE: &str = "stems_voice.wav";
+const STEM_BGM: &str = "stems_bgm.wav";
+const STEM_SFX: &str = "stems_sfx.wav";
+const STEM_NOVOICE: &str = "stems_novoice.wav";
 
 /// 脚本渲染出的成片名。
 const OUTPUT_MP4: &str = "out.mp4";
@@ -47,6 +60,9 @@ const FADE_SECS: f64 = 0.3;
 /// 音频归一化链的前半段；所有音频输入都先统一到 48kHz 立体声 fltp。
 const AFORMAT: &str = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
+/// 对白闪避参数：人声一过阈值就按固定比例压低 BGM。
+const SIDECHAIN: &str = "sidechaincompress=threshold=0.05:ratio=8:attack=20:release=400";
+
 /// 剪辑工程包产物：目录、导出记录、包内相对文件清单。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,17 +72,49 @@ pub struct PostPackOutcome {
     pub files: Vec<String>,
 }
 
+/// 导出剪辑工程包的可选项；字段缺省时按 [`Default`] 补齐。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PostPackOptions {
+    /// 把被引用的媒体复制进包内 `media/`，使整包可搬走（默认关：复制重）。
+    pub self_contained: bool,
+    /// 额外输出 `subtitles.vtt`。
+    pub webvtt: bool,
+    /// 额外输出纯文本台词本 `lines.txt`。
+    pub script_lines: bool,
+    /// 额外输出剪辑软件交换文件 `timeline.edl`（CMX3600）。
+    pub edl: bool,
+    /// 额外输出分轨渲染脚本 `render_stems.sh` / `render_stems.bat`。
+    pub stems: bool,
+}
+
+impl Default for PostPackOptions {
+    fn default() -> Self {
+        Self {
+            self_contained: false,
+            webvtt: true,
+            script_lines: true,
+            edl: true,
+            stems: true,
+        }
+    }
+}
+
 // ---------- 命令 ----------
 
-/// 导出剪辑工程包：时间线 JSON + SRT / ASS 字幕 + 素材清单 + 一键渲染脚本。
+/// 导出剪辑工程包：时间线 JSON + 字幕（SRT / ASS / VTT）+ 素材清单 + 一键渲染脚本。
 ///
+/// `options` 控制可选增强：自带媒体、额外文本格式、EDL 交换文件、分轨渲染脚本。
 /// 返回本次导出记录，由调用方追加进 `project.exports`——命令层不替项目做主。
 #[tauri::command]
 pub fn export_post_pack(
     project_path: String,
     project: Project,
     dest_dir: String,
+    options: Option<PostPackOptions>,
 ) -> AppResult<PostPackOutcome> {
+    let options = options.unwrap_or_default();
+
     if project.post.timeline.is_empty() {
         return Err(AppError::Validation {
             field: "post".into(),
@@ -88,8 +136,13 @@ pub fn export_post_pack(
         project.meta.fps
     };
     let total_ms = timeline_duration_ms(&project.post.timeline);
+    let created_at = now_iso();
 
-    let inputs = plan_inputs(&project, &plan);
+    // 安排输入；自带媒体时顺带登记要复制进包内的文件。
+    let mut media = MediaMap::new(&root, options.self_contained);
+    let inputs = plan_inputs(&project, &plan, &mut media)?;
+    let materials = materials_csv(&project, &plan, &mut media)?;
+
     let kinds: Vec<InputKind> = inputs.iter().map(|input| input.kind.clone()).collect();
     let burn_in = project.post.subtitle_style.burn_in;
     let enabled_subs: Vec<SubtitleCue> = project
@@ -100,18 +153,32 @@ pub fn export_post_pack(
         .cloned()
         .collect();
     let has_subtitles = !enabled_subs.is_empty();
+    let ducking = project.post.bgm.as_ref().is_some_and(|bgm| bgm.ducking);
     let (graph, has_audio) = filter_graph(
         &kinds,
         width,
         height,
         fps,
         burn_in && has_subtitles,
-        project.post.bgm.as_ref().is_some_and(|bgm| bgm.ducking),
+        ducking,
     );
+    let stems = if options.stems && has_audio {
+        stem_graphs(&kinds, ducking)
+    } else {
+        Vec::new()
+    };
+
+    let mut files = Vec::new();
+
+    // 自带媒体：把被引用的文件复制进包内 media/。
+    for copy in &media.copies {
+        copy_file(&dest.join(&copy.target), &copy.source)?;
+        files.push(copy.target.clone());
+    }
 
     let doc = TimelineDoc {
         project: project.name.clone(),
-        created_at: now_iso(),
+        created_at: created_at.clone(),
         preset: project.post.export_preset.clone(),
         width,
         height,
@@ -131,7 +198,6 @@ pub fn export_post_pack(
         pending_voice_lines: plan.pending.clone(),
     };
 
-    let mut files = Vec::new();
     let parts: [(&str, Vec<u8>); 4] = [
         (TIMELINE_JSON, serde_json::to_vec_pretty(&doc)?),
         (SUBTITLES_SRT, build_srt(&enabled_subs).into_bytes()),
@@ -139,11 +205,33 @@ pub fn export_post_pack(
             SUBTITLES_ASS,
             build_ass(&enabled_subs, &project.post.subtitle_style, width, height).into_bytes(),
         ),
-        (MATERIALS_CSV, materials_csv(&project, &plan)?),
+        (MATERIALS_CSV, materials),
     ];
     for (name, bytes) in parts {
         write_file(&dest.join(name), &bytes)?;
         files.push(name.to_string());
+    }
+
+    if options.webvtt {
+        write_file(
+            &dest.join(SUBTITLES_VTT),
+            build_vtt(&enabled_subs).as_bytes(),
+        )?;
+        files.push(SUBTITLES_VTT.to_string());
+    }
+    if options.script_lines {
+        write_file(
+            &dest.join(SCRIPT_LINES),
+            build_lines(&project, &created_at, &enabled_subs).as_bytes(),
+        )?;
+        files.push(SCRIPT_LINES.to_string());
+    }
+    if options.edl {
+        write_file(
+            &dest.join(TIMELINE_EDL),
+            build_edl(&project, fps).as_bytes(),
+        )?;
+        files.push(TIMELINE_EDL.to_string());
     }
 
     let command = ffmpeg_command(ScriptStyle::Sh, &inputs, has_audio, fps, total_ms);
@@ -160,9 +248,26 @@ pub fn export_post_pack(
     )?;
     files.push(RENDER_BAT.to_string());
 
+    if !stems.is_empty() {
+        write_file(
+            &dest.join(RENDER_STEMS_SH),
+            render_stems_sh(&root, &inputs, &stems, total_ms).as_bytes(),
+        )?;
+        files.push(RENDER_STEMS_SH.to_string());
+        write_file(
+            &dest.join(RENDER_STEMS_BAT),
+            render_stems_bat(&root, &inputs, &stems, total_ms).as_bytes(),
+        )?;
+        files.push(RENDER_STEMS_BAT.to_string());
+    }
+
+    // manifest 与说明文件也列入清单（在写 manifest 之前先登记好名字）。
+    files.push(MANIFEST_JSON.to_string());
+    files.push(README_TXT.to_string());
+
     let manifest = Manifest {
         project: project.name.clone(),
-        created_at: now_iso(),
+        created_at: created_at.clone(),
         preset: project.post.export_preset.clone(),
         width,
         height,
@@ -179,6 +284,7 @@ pub fn export_post_pack(
             .filter(|cue| cue.enabled)
             .count(),
         burn_in: burn_in && has_subtitles,
+        self_contained: options.self_contained,
         output: OUTPUT_MP4.to_string(),
         files: files.clone(),
         pending_voice_lines: plan.pending.clone(),
@@ -187,13 +293,11 @@ pub fn export_post_pack(
         &dest.join(MANIFEST_JSON),
         &serde_json::to_vec_pretty(&manifest)?,
     )?;
-    files.push(MANIFEST_JSON.to_string());
 
     write_file(
         &dest.join(README_TXT),
         readme(&project, &manifest, &root).as_bytes(),
     )?;
-    files.push(README_TXT.to_string());
 
     Ok(PostPackOutcome {
         dir: dest.display().to_string(),
@@ -386,6 +490,40 @@ fn build_srt(cues: &[SubtitleCue]) -> String {
     out
 }
 
+/// WebVTT 软字幕：内容与 SRT 一致，时间戳用 `.` 分隔毫秒。
+fn build_vtt(cues: &[SubtitleCue]) -> String {
+    let mut out = String::from("WEBVTT\n\n");
+    for (index, cue) in cues.iter().enumerate() {
+        out.push_str(&format!("{}\n", index + 1));
+        out.push_str(&format!(
+            "{} --> {}\n",
+            srt_time(cue.start_ms).replace(',', "."),
+            srt_time(cue.end_ms).replace(',', ".")
+        ));
+        out.push_str(&one_line(&cue.text));
+        out.push_str("\n\n");
+    }
+    out
+}
+
+/// 纯文本台词本：按镜头列台词/旁白与时间，方便配音或念稿。
+fn build_lines(project: &Project, created_at: &str, cues: &[SubtitleCue]) -> String {
+    let mut out = format!(
+        "TakeKit 台词本 · {}\n导出于 {}\n\n",
+        project.name, created_at
+    );
+    for cue in cues {
+        out.push_str(&format!(
+            "[第 {} 镜] {} → {}\n{}\n\n",
+            cue.shot_no,
+            srt_time(cue.start_ms),
+            srt_time(cue.end_ms),
+            one_line(&cue.text)
+        ));
+    }
+    out
+}
+
 /// ASS 样式字幕；`PlayResX/Y` 跟成片一致，安全区按百分比折算边距。
 fn build_ass(cues: &[SubtitleCue], style: &SubtitleStyle, width: u32, height: u32) -> String {
     let margin_h = width.saturating_mul(style.safe_margin_percent) / 100;
@@ -504,10 +642,61 @@ fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+// ---------- EDL ----------
+
+/// EDL 时间码：`HH:MM:SS:FF`（非丢帧），帧号按项目帧率折算。
+fn edl_time(ms: u64, fps: u32) -> String {
+    let fps = if fps == 0 { 30 } else { fps };
+    let total_frames = ((ms as f64 / 1000.0) * fps as f64).round() as u64;
+    let frames = total_frames % fps as u64;
+    let seconds = total_frames / fps as u64;
+    format!(
+        "{:02}:{:02}:{:02}:{:02}",
+        seconds / 3600,
+        (seconds / 60) % 60,
+        seconds % 60,
+        frames
+    )
+}
+
+/// 非硬切转场在 EDL 里留一条注释（EDL 本身只表达硬切）。
+fn transition_name(transition: &Transition) -> Option<&'static str> {
+    match transition {
+        Transition::Cut => None,
+        Transition::Dissolve => Some("DISSOLVE"),
+        Transition::FadeIn => Some("FADE IN"),
+        Transition::FadeOut => Some("FADE OUT"),
+        Transition::WhipPan => Some("WHIP PAN"),
+    }
+}
+
+/// EDL（CMX3600）：每条片段一个事件，源入点从 0 起，录制入点用片段时间线起点。
+///
+/// Premiere / 达芬奇都能直接导入，作为「结构化时间线」的通用交换格式。
+fn build_edl(project: &Project, fps: u32) -> String {
+    let mut out = format!("TITLE: {}\nFCM: NON-DROP FRAME\n\n", project.name);
+    for (index, clip) in project.post.timeline.iter().enumerate() {
+        out.push_str(&format!(
+            "{:03}  AX       V     C        {} {} {} {}\n",
+            index + 1,
+            edl_time(0, fps),
+            edl_time(clip.duration_ms, fps),
+            edl_time(clip.start_ms, fps),
+            edl_time(clip.start_ms + clip.duration_ms, fps),
+        ));
+        if let Some(name) = transition_name(&clip.transition) {
+            out.push_str(&format!("* TRANSITION: {name}\n"));
+        }
+        out.push_str(&format!("* FROM CLIP NAME: {}\n", clip.clip_path));
+        out.push('\n');
+    }
+    out
+}
+
 // ---------- 素材清单 ----------
 
 /// 素材清单：每个被引用的文件一行，供换台机器时按相对位置放回。
-fn materials_csv(project: &Project, plan: &PostPlan) -> AppResult<Vec<u8>> {
+fn materials_csv(project: &Project, plan: &PostPlan, media: &mut MediaMap) -> AppResult<Vec<u8>> {
     let mut writer = csv::Writer::from_writer(Vec::new());
     writer
         .write_record(MATERIAL_COLUMNS)
@@ -518,7 +707,7 @@ fn materials_csv(project: &Project, plan: &PostPlan) -> AppResult<Vec<u8>> {
             .write_record([
                 "clip".to_string(),
                 clip.shot_no.to_string(),
-                clip.clip_path.clone(),
+                media.material_ref(&clip.clip_path, "clip")?,
                 format!("第 {} 镜画面片段", clip.shot_no),
             ])
             .map_err(|e| AppError::Internal(format!("csv: {e}")))?;
@@ -533,7 +722,12 @@ fn materials_csv(project: &Project, plan: &PostPlan) -> AppResult<Vec<u8>> {
             format!("第 {} 镜台词配音：{}", line.shot_no, one_line(&line.text))
         };
         writer
-            .write_record(["voice".to_string(), line.shot_no.to_string(), path, note])
+            .write_record([
+                "voice".to_string(),
+                line.shot_no.to_string(),
+                media.material_ref(&path, "voice")?,
+                note,
+            ])
             .map_err(|e| AppError::Internal(format!("csv: {e}")))?;
     }
 
@@ -544,7 +738,12 @@ fn materials_csv(project: &Project, plan: &PostPlan) -> AppResult<Vec<u8>> {
             bgm.name.clone()
         };
         writer
-            .write_record(["bgm".to_string(), String::new(), bgm.path.clone(), name])
+            .write_record([
+                "bgm".to_string(),
+                String::new(),
+                media.material_ref(&bgm.path, "bgm")?,
+                name,
+            ])
             .map_err(|e| AppError::Internal(format!("csv: {e}")))?;
     }
 
@@ -553,7 +752,7 @@ fn materials_csv(project: &Project, plan: &PostPlan) -> AppResult<Vec<u8>> {
             .write_record([
                 "sfx".to_string(),
                 cue.shot_no.to_string(),
-                cue.path.clone(),
+                media.material_ref(&cue.path, "sfx")?,
                 format!("第 {} 镜音效：{}", cue.shot_no, one_line(&cue.hint)),
             ])
             .map_err(|e| AppError::Internal(format!("csv: {e}")))?;
@@ -562,6 +761,89 @@ fn materials_csv(project: &Project, plan: &PostPlan) -> AppResult<Vec<u8>> {
     writer
         .into_inner()
         .map_err(|e| AppError::Internal(format!("csv: {e}")))
+}
+
+// ---------- 自带媒体 ----------
+
+/// 一个要复制进包内的媒体：源绝对路径 → 包内目标（相对包根，如 `media/clip_001.mp4`）。
+#[derive(Debug, Clone)]
+struct MediaCopy {
+    source: PathBuf,
+    target: String,
+}
+
+/// 媒体引用登记表；`self_contained` 打开时顺带安排复制与路径改写。
+struct MediaMap {
+    root: PathBuf,
+    self_contained: bool,
+    copies: Vec<MediaCopy>,
+    /// 解析后的绝对路径 → 包内目标，保证同一来源只复制一次。
+    seen: HashMap<PathBuf, String>,
+}
+
+impl MediaMap {
+    fn new(root: &Path, self_contained: bool) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            self_contained,
+            copies: Vec::new(),
+            seen: HashMap::new(),
+        }
+    }
+
+    /// 登记一条被引用的媒体，返回它在渲染脚本里该用的引用文本。
+    ///
+    /// 不自带媒体时按 `{ROOT}/相对` 引用（素材库的绝对路径原样）；自带时复制进包内，
+    /// 引用改写为包内相对路径（脚本 `cd` 到包目录后即可直接读）。
+    fn register(&mut self, raw: &str, stem: &str) -> AppResult<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+        if !self.self_contained {
+            return Ok(media_ref(trimmed));
+        }
+        let absolute = resolve_media(&self.root, trimmed)?;
+        if let Some(target) = self.seen.get(&absolute) {
+            return Ok(target.clone());
+        }
+        let target = self.next_target(&absolute, stem);
+        self.seen.insert(absolute.clone(), target.clone());
+        self.copies.push(MediaCopy {
+            source: absolute,
+            target: target.clone(),
+        });
+        Ok(target)
+    }
+
+    /// 素材清单里的路径列：自带时指向包内 `media/`，否则保持原始引用（便于放回原位）。
+    fn material_ref(&mut self, raw: &str, stem: &str) -> AppResult<String> {
+        if !self.self_contained {
+            return Ok(raw.trim().replace('\\', "/"));
+        }
+        self.register(raw, stem)
+    }
+
+    /// 包内目标名：`media/<用途>_<序号>.<扩展名>`。
+    fn next_target(&self, absolute: &Path, stem: &str) -> String {
+        let ext = extension_of(absolute);
+        let index = self.copies.len() + 1;
+        let file = if ext.is_empty() {
+            format!("{stem}_{index:03}")
+        } else {
+            format!("{stem}_{index:03}.{ext}")
+        };
+        format!("{MEDIA_DIR}/{file}")
+    }
+}
+
+/// 复制一个媒体文件进包；目标父目录按需创建。
+fn copy_file(dest: &Path, source: &Path) -> AppResult<()> {
+    if let Some(parent) = dest.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, dest)?;
+    Ok(())
 }
 
 // ---------- ffmpeg 输入与滤镜图 ----------
@@ -589,12 +871,16 @@ enum InputKind {
 }
 
 /// 按「片段 → 配音 → BGM → 音效」的顺序编排输入；滤镜图里的索引与之对应。
-fn plan_inputs(project: &Project, plan: &PostPlan) -> Vec<FfmpegInput> {
+fn plan_inputs(
+    project: &Project,
+    plan: &PostPlan,
+    media: &mut MediaMap,
+) -> AppResult<Vec<FfmpegInput>> {
     let mut inputs = Vec::new();
 
     for clip in &project.post.timeline {
         inputs.push(FfmpegInput {
-            args: format!("-i \"{}\"", media_ref(&clip.clip_path)),
+            args: format!("-i \"{}\"", media.register(&clip.clip_path, "clip")?),
             kind: InputKind::Video {
                 transition: clip.transition,
                 duration_ms: clip.duration_ms,
@@ -607,7 +893,7 @@ fn plan_inputs(project: &Project, plan: &PostPlan) -> Vec<FfmpegInput> {
             continue;
         };
         inputs.push(FfmpegInput {
-            args: format!("-i \"{}\"", media_ref(path)),
+            args: format!("-i \"{}\"", media.register(path, "voice")?),
             kind: InputKind::Voice {
                 start_ms: voice.start_ms,
             },
@@ -617,14 +903,14 @@ fn plan_inputs(project: &Project, plan: &PostPlan) -> Vec<FfmpegInput> {
     if let Some(bgm) = &plan.bgm {
         let looped = if bgm.looping { "-stream_loop -1 " } else { "" };
         inputs.push(FfmpegInput {
-            args: format!("{looped}-i \"{}\"", media_ref(&bgm.path)),
+            args: format!("{looped}-i \"{}\"", media.register(&bgm.path, "bgm")?),
             kind: InputKind::Bgm { volume: bgm.volume },
         });
     }
 
     for cue in &plan.sfx {
         inputs.push(FfmpegInput {
-            args: format!("-i \"{}\"", media_ref(&cue.path)),
+            args: format!("-i \"{}\"", media.register(&cue.path, "sfx")?),
             kind: InputKind::Sfx {
                 at_ms: cue.at_ms,
                 volume: cue.volume,
@@ -632,7 +918,7 @@ fn plan_inputs(project: &Project, plan: &PostPlan) -> Vec<FfmpegInput> {
         });
     }
 
-    inputs
+    Ok(inputs)
 }
 
 /// 素材引用的脚本文本；相对路径挂在 `{ROOT}` 下，绝对路径（素材库）原样用。
@@ -659,81 +945,125 @@ fn filter_graph(
     ducking: bool,
 ) -> (String, bool) {
     let mut parts: Vec<String> = Vec::new();
-    let mut video_labels: Vec<String> = Vec::new();
-    let mut voice_labels: Vec<String> = Vec::new();
-    let mut bgm_label: Option<String> = None;
-    let mut sfx_labels: Vec<String> = Vec::new();
+    video_chain(&mut parts, inputs, width, height, fps, burn_in);
+    let has_audio = main_audio(&mut parts, inputs, ducking);
+    (parts.join(";"), has_audio)
+}
 
-    let mut video_count = 0;
-    let mut voice_count = 0;
-    let mut sfx_count = 0;
-
+/// 画面链：逐片段归一 → `concat` 硬切 → 需要时烧字幕；输出 `[vout]`。
+fn video_chain(
+    parts: &mut Vec<String>,
+    inputs: &[InputKind],
+    width: u32,
+    height: u32,
+    fps: u32,
+    burn_in: bool,
+) {
+    let mut labels: Vec<String> = Vec::new();
     for (index, kind) in inputs.iter().enumerate() {
-        match kind {
-            InputKind::Video {
-                transition,
-                duration_ms,
-            } => {
-                let mut chain = format!(
-                    "scale={width}:{height}:force_original_aspect_ratio=decrease,\
-                     pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,\
-                     fps={fps},format=yuv420p"
-                );
-                let duration = *duration_ms as f64 / 1000.0;
-                match transition {
-                    Transition::FadeIn => {
-                        chain.push_str(&format!(",fade=t=in:st=0:d={FADE_SECS}"));
-                    }
-                    Transition::FadeOut => {
-                        let start = (duration - FADE_SECS).max(0.0);
-                        chain.push_str(&format!(",fade=t=out:st={start:.3}:d={FADE_SECS}"));
-                    }
-                    // cut / dissolve / whip_pan 都按硬切拼：应用不做复杂特效。
-                    Transition::Cut | Transition::Dissolve | Transition::WhipPan => {}
-                }
-                parts.push(format!("[{index}:v]{chain}[v{video_count}]"));
-                video_labels.push(format!("[v{video_count}]"));
-                video_count += 1;
+        let InputKind::Video {
+            transition,
+            duration_ms,
+        } = kind
+        else {
+            continue;
+        };
+        let mut chain = format!(
+            "scale={width}:{height}:force_original_aspect_ratio=decrease,\
+             pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,\
+             fps={fps},format=yuv420p"
+        );
+        let duration = *duration_ms as f64 / 1000.0;
+        match transition {
+            Transition::FadeIn => {
+                chain.push_str(&format!(",fade=t=in:st=0:d={FADE_SECS}"));
             }
-            InputKind::Voice { start_ms } => {
-                parts.push(format!(
-                    "[{index}:a]{AFORMAT},adelay={start_ms}:all=1,volume=1.0[vc{voice_count}]"
-                ));
-                voice_labels.push(format!("[vc{voice_count}]"));
-                voice_count += 1;
+            Transition::FadeOut => {
+                let start = (duration - FADE_SECS).max(0.0);
+                chain.push_str(&format!(",fade=t=out:st={start:.3}:d={FADE_SECS}"));
             }
-            InputKind::Bgm { volume } => {
-                parts.push(format!(
-                    "[{index}:a]{AFORMAT},volume={:.2}[bgm0]",
-                    *volume as f64 / 100.0
-                ));
-                bgm_label = Some("[bgm0]".to_string());
-            }
-            InputKind::Sfx { at_ms, volume } => {
-                parts.push(format!(
-                    "[{index}:a]{AFORMAT},adelay={at_ms}:all=1,volume={:.2}[sfx{sfx_count}]",
-                    *volume as f64 / 100.0
-                ));
-                sfx_labels.push(format!("[sfx{sfx_count}]"));
-                sfx_count += 1;
-            }
+            // cut / dissolve / whip_pan 都按硬切拼：应用不做复杂特效。
+            Transition::Cut | Transition::Dissolve | Transition::WhipPan => {}
         }
+        let label = format!("[v{}]", labels.len());
+        parts.push(format!("[{index}:v]{chain}{label}"));
+        labels.push(label);
     }
 
-    // 画面：拼接 + 烧字幕。
-    let clip_count = video_labels.len();
-    parts.push(format!(
-        "{}concat=n={clip_count}:v=1:a=0[vcat]",
-        video_labels.join("")
-    ));
+    let count = labels.len();
+    parts.push(format!("{}concat=n={count}:v=1:a=0[vcat]", labels.join("")));
     if burn_in {
         parts.push("[vcat]ass=subtitles.ass[vout]".to_string());
     } else {
         parts.push("[vcat]null[vout]".to_string());
     }
+}
+
+/// 追一条音频输入的归一链，返回它的标签；画面输入返回 `None`。
+fn audio_input(
+    parts: &mut Vec<String>,
+    index: usize,
+    kind: &InputKind,
+    voice_index: usize,
+    sfx_index: usize,
+) -> Option<String> {
+    match kind {
+        InputKind::Voice { start_ms } => {
+            let label = format!("[vc{voice_index}]");
+            parts.push(format!(
+                "[{index}:a]{AFORMAT},adelay={start_ms}:all=1,volume=1.0{label}"
+            ));
+            Some(label)
+        }
+        InputKind::Bgm { volume } => {
+            parts.push(format!(
+                "[{index}:a]{AFORMAT},volume={:.2}[bgm0]",
+                *volume as f64 / 100.0
+            ));
+            Some("[bgm0]".to_string())
+        }
+        InputKind::Sfx { at_ms, volume } => {
+            let label = format!("[sfx{sfx_index}]");
+            parts.push(format!(
+                "[{index}:a]{AFORMAT},adelay={at_ms}:all=1,volume={:.2}{label}",
+                *volume as f64 / 100.0
+            ));
+            Some(label)
+        }
+        InputKind::Video { .. } => None,
+    }
+}
+
+/// 主混音：人声 +（可闪避的）BGM + 音效 → `[aout]`；返回是否真有音频。
+fn main_audio(parts: &mut Vec<String>, inputs: &[InputKind], ducking: bool) -> bool {
+    let mut voice_labels: Vec<String> = Vec::new();
+    let mut sfx_labels: Vec<String> = Vec::new();
+    let mut bgm_label: Option<String> = None;
+    let mut voice_count = 0;
+    let mut sfx_count = 0;
+
+    for (index, kind) in inputs.iter().enumerate() {
+        let label = audio_input(parts, index, kind, voice_count, sfx_count);
+        match kind {
+            InputKind::Voice { .. } => {
+                if let Some(label) = label {
+                    voice_labels.push(label);
+                }
+                voice_count += 1;
+            }
+            InputKind::Bgm { .. } => bgm_label = label,
+            InputKind::Sfx { .. } => {
+                if let Some(label) = label {
+                    sfx_labels.push(label);
+                }
+                sfx_count += 1;
+            }
+            InputKind::Video { .. } => {}
+        }
+    }
 
     // 人声轨。
-    let mut voice_out = mix_labels(&mut parts, &voice_labels, "[voc]");
+    let mut voice_out = mix_labels(parts, &voice_labels, "[voc]");
 
     // BGM：有对白且开了闪避时，以人声为触发压低 BGM。
     let mut bgm_out: Option<String> = None;
@@ -741,9 +1071,7 @@ fn filter_graph(
         match (&voice_out, ducking) {
             (Some(voice), true) => {
                 parts.push(format!("{voice}asplit=2[vocmix][vocsc]"));
-                parts.push(format!(
-                    "{bgm}[vocsc]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=400[bgmv]"
-                ));
+                parts.push(format!("{bgm}[vocsc]{SIDECHAIN}[bgmv]"));
                 voice_out = Some("[vocmix]".to_string());
                 bgm_out = Some("[bgmv]".to_string());
             }
@@ -760,21 +1088,28 @@ fn filter_graph(
     }
     final_labels.extend(sfx_labels);
 
-    let has_audio = !final_labels.is_empty();
-    if has_audio {
-        match final_labels.len() {
-            1 => parts.push(format!("{}anull[aout]", final_labels[0])),
-            count => parts.push(format!(
-                "{}amix=inputs={count}:normalize=0:dropout_transition=0[aout]",
-                final_labels.join("")
-            )),
-        }
-    }
-
-    (parts.join(";"), has_audio)
+    emit_mix(parts, &final_labels, "[aout]")
 }
 
-/// 把若干音频标签混成一个；0 个返回 `None`，1 个原样透传（标签即结果）。
+/// 把若干音频标签混成一条；0 个返回 `false`，1 个 `anull` 透传，多个 `amix`。
+fn emit_mix(parts: &mut Vec<String>, labels: &[String], out: &str) -> bool {
+    match labels.len() {
+        0 => false,
+        1 => {
+            parts.push(format!("{}anull{out}", labels[0]));
+            true
+        }
+        count => {
+            parts.push(format!(
+                "{}amix=inputs={count}:normalize=0:dropout_transition=0{out}",
+                labels.join("")
+            ));
+            true
+        }
+    }
+}
+
+/// 把若干音频标签混成一个中间标签；0 个返回 `None`，1 个原样透传。
 fn mix_labels(parts: &mut Vec<String>, labels: &[String], out: &str) -> Option<String> {
     match labels.len() {
         0 => None,
@@ -908,7 +1243,278 @@ fn normalize_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+// ---------- 分轨音频 ----------
+
+/// 分轨的角色；决定这条 WAV 装哪些声音。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AudioRole {
+    /// 纯人声（配音 / 旁白）。
+    Voice,
+    /// 纯 BGM（有对白时按对白闪避）。
+    Bgm,
+    /// 纯音效。
+    Sfx,
+    /// BGM + 音效的无配音混音。
+    NoVoice,
+}
+
+/// 一条分轨：角色、输出文件名、只产出 `[aout]` 的滤镜图。
+#[derive(Debug, Clone)]
+struct Stem {
+    role: AudioRole,
+    file: &'static str,
+    graph: String,
+}
+
+/// 分轨的角色名（写进脚本注释）。
+fn stem_role_label(role: AudioRole) -> &'static str {
+    match role {
+        AudioRole::Voice => "人声",
+        AudioRole::Bgm => "BGM",
+        AudioRole::Sfx => "音效",
+        AudioRole::NoVoice => "无配音混音",
+    }
+}
+
+/// 生成各分轨：实际存在的角色才出；「无配音」需要 BGM 与音效同时存在。
+fn stem_graphs(inputs: &[InputKind], ducking: bool) -> Vec<Stem> {
+    let has_voice = inputs.iter().any(|k| matches!(k, InputKind::Voice { .. }));
+    let has_bgm = inputs.iter().any(|k| matches!(k, InputKind::Bgm { .. }));
+    let has_sfx = inputs.iter().any(|k| matches!(k, InputKind::Sfx { .. }));
+
+    let mut stems = Vec::new();
+    if has_voice {
+        stems.push(Stem {
+            role: AudioRole::Voice,
+            file: STEM_VOICE,
+            graph: stem_graph(inputs, &[AudioRole::Voice], false),
+        });
+    }
+    if has_bgm {
+        stems.push(Stem {
+            role: AudioRole::Bgm,
+            file: STEM_BGM,
+            graph: stem_graph(inputs, &[AudioRole::Bgm], ducking),
+        });
+    }
+    if has_sfx {
+        stems.push(Stem {
+            role: AudioRole::Sfx,
+            file: STEM_SFX,
+            graph: stem_graph(inputs, &[AudioRole::Sfx], false),
+        });
+    }
+    if has_bgm && has_sfx {
+        stems.push(Stem {
+            role: AudioRole::NoVoice,
+            file: STEM_NOVOICE,
+            graph: stem_graph(inputs, &[AudioRole::Bgm, AudioRole::Sfx], ducking),
+        });
+    }
+    stems
+}
+
+/// 单个分轨的滤镜图：挑出需要的角色混成 `[aout]`。
+///
+/// BGM 分轨要闪避时，人声虽不输出，但仍作为 `sidechaincompress` 的触发轨；
+/// 若人声同时要输出，则 `asplit` 成「输出」与「触发」两条。
+fn stem_graph(inputs: &[InputKind], roles: &[AudioRole], ducking: bool) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut voice_labels: Vec<String> = Vec::new();
+    let mut sfx_labels: Vec<String> = Vec::new();
+    let mut bgm_label: Option<String> = None;
+    let mut voice_count = 0;
+    let mut sfx_count = 0;
+
+    for (index, kind) in inputs.iter().enumerate() {
+        let label = audio_input(&mut parts, index, kind, voice_count, sfx_count);
+        match kind {
+            InputKind::Voice { .. } => {
+                if let Some(label) = label {
+                    voice_labels.push(label);
+                }
+                voice_count += 1;
+            }
+            InputKind::Bgm { .. } => bgm_label = label,
+            InputKind::Sfx { .. } => {
+                if let Some(label) = label {
+                    sfx_labels.push(label);
+                }
+                sfx_count += 1;
+            }
+            InputKind::Video { .. } => {}
+        }
+    }
+
+    let want_voice = roles.contains(&AudioRole::Voice);
+    let want_bgm = roles.contains(&AudioRole::Bgm);
+    let want_sfx = roles.contains(&AudioRole::Sfx);
+    let want_trigger = want_bgm && ducking && !voice_labels.is_empty();
+
+    let voice_mix = if want_voice || want_trigger {
+        mix_labels(&mut parts, &voice_labels, "[voc]")
+    } else {
+        None
+    };
+
+    let mut voice_out: Option<String> = None;
+    let mut trigger: Option<String> = None;
+    if let Some(voice) = &voice_mix {
+        match (want_voice, want_trigger) {
+            (true, true) => {
+                parts.push(format!("{voice}asplit=2[vocout][vocsc]"));
+                voice_out = Some("[vocout]".to_string());
+                trigger = Some("[vocsc]".to_string());
+            }
+            (true, false) => voice_out = Some(voice.clone()),
+            (false, true) => trigger = Some(voice.clone()),
+            (false, false) => {}
+        }
+    }
+
+    let mut bgm_out: Option<String> = None;
+    if want_bgm {
+        if let Some(bgm) = bgm_label {
+            match &trigger {
+                Some(trigger) => {
+                    parts.push(format!("{bgm}{trigger}{SIDECHAIN}[bgmv]"));
+                    bgm_out = Some("[bgmv]".to_string());
+                }
+                None => bgm_out = Some(bgm),
+            }
+        }
+    }
+
+    let mut final_labels: Vec<String> = Vec::new();
+    if let Some(voice) = voice_out {
+        final_labels.push(voice);
+    }
+    if let Some(bgm) = bgm_out {
+        final_labels.push(bgm);
+    }
+    if want_sfx {
+        final_labels.extend(sfx_labels);
+    }
+
+    emit_mix(&mut parts, &final_labels, "[aout]");
+    parts.join(";")
+}
+
+/// 组装一条分轨的 ffmpeg 调用：同一批输入，换成该分轨的滤镜图，只出音频 WAV。
+fn stem_command(style: ScriptStyle, inputs: &[FfmpegInput], stem: &Stem, total_ms: u64) -> String {
+    let var = match style {
+        ScriptStyle::Sh => "$ROOT",
+        ScriptStyle::Bat => "%ROOT%",
+    };
+    let input_args: Vec<String> = inputs
+        .iter()
+        .map(|input| input.args.replace("{ROOT}", var))
+        .collect();
+    let options = format!(
+        "-map \"[aout]\" -c:a pcm_s16le -ar 48000 -ac 2 -t {:.3} \"{}\"",
+        total_ms as f64 / 1000.0,
+        stem.file
+    );
+
+    match style {
+        ScriptStyle::Sh => {
+            let mut out = String::from("ffmpeg -y");
+            for arg in &input_args {
+                out.push_str(&format!(" \\\n  {arg}"));
+            }
+            out.push_str(&format!(" \\\n  -filter_complex '{}'", stem.graph));
+            out.push_str(&format!(" \\\n  {options}"));
+            out
+        }
+        ScriptStyle::Bat => {
+            let mut out = String::from("ffmpeg -y");
+            for arg in &input_args {
+                out.push(' ');
+                out.push_str(arg);
+            }
+            out.push_str(&format!(" -filter_complex \"{}\" {options}", stem.graph));
+            out
+        }
+    }
+}
+
+/// 分轨渲染脚本（sh）：每条分轨一次 ffmpeg，产出四条 WAV。
+fn render_stems_sh(root: &Path, inputs: &[FfmpegInput], stems: &[Stem], total_ms: u64) -> String {
+    let root = normalize_path(root);
+    let mut out = format!(
+        "#!/usr/bin/env bash\n\
+         # TakeKit 剪辑工程包 · 分轨渲染脚本\n\
+         # 用法：`bash render_stems.sh`（需要 PATH 里有 ffmpeg）\n\
+         # 产出：人声 / BGM / 音效 / 无配音 四条 WAV，便于单独调音。\n\
+         set -euo pipefail\n\
+         cd \"$(dirname \"$0\")\"\n\
+         \n\
+         ROOT=\"{root}\"\n"
+    );
+    for stem in stems {
+        out.push_str(&format!(
+            "\n# {} → {}\n",
+            stem_role_label(stem.role),
+            stem.file
+        ));
+        out.push_str(&format!("echo \"渲染分轨：{}\"\n", stem.file));
+        out.push_str(&stem_command(ScriptStyle::Sh, inputs, stem, total_ms));
+        out.push('\n');
+    }
+    out
+}
+
+/// 分轨渲染脚本（bat）：同上，Windows 方言。
+fn render_stems_bat(root: &Path, inputs: &[FfmpegInput], stems: &[Stem], total_ms: u64) -> String {
+    let root = normalize_path(root);
+    let mut out = format!(
+        "@echo off\n\
+         setlocal\n\
+         REM TakeKit 剪辑工程包 · 分轨渲染脚本\n\
+         REM 用法：双击 render_stems.bat（需要 PATH 里有 ffmpeg）\n\
+         cd /d \"%~dp0\"\n\
+         \n\
+         set \"ROOT={root}\"\n"
+    );
+    for stem in stems {
+        out.push_str(&format!(
+            "\nREM {} -> {}\n",
+            stem_role_label(stem.role),
+            stem.file
+        ));
+        out.push_str(&format!("echo 渲染分轨：{}\n", stem.file));
+        out.push_str(&stem_command(ScriptStyle::Bat, inputs, stem, total_ms));
+        out.push('\n');
+        out.push_str("if errorlevel 1 (\n");
+        out.push_str(&format!("echo 分轨渲染失败：{}\n", stem.file));
+        out.push_str("exit /b 1\n");
+        out.push_str(")\n");
+    }
+    out.push_str("\necho 全部分轨完成。\n");
+    out.replace('\n', "\r\n")
+}
+
 // ---------- 说明文件 ----------
+
+/// 包内固定文件的用途；媒体文件返回 `None`（说明里归入「包内媒体」区块）。
+fn describe(name: &str) -> Option<&'static str> {
+    match name {
+        TIMELINE_JSON => Some("四轨结构化时间线（片段 / 配音 / 字幕 / BGM 与音效）"),
+        SUBTITLES_SRT => Some("软字幕，可导入任意剪辑软件"),
+        SUBTITLES_ASS => Some("带样式字幕；burn_in 打开时已烧进画面"),
+        SUBTITLES_VTT => Some("WebVTT 软字幕，适合网页播放器"),
+        SCRIPT_LINES => Some("纯文本台词本，便于配音或念稿"),
+        TIMELINE_EDL => Some("EDL（CMX3600），可导入 Premiere / 达芬奇"),
+        MATERIALS_CSV => Some("素材清单：每个被引用的文件与它的用途"),
+        RENDER_SH => Some("macOS / Linux 一键渲染脚本"),
+        RENDER_BAT => Some("Windows 一键渲染脚本"),
+        RENDER_STEMS_SH => Some("macOS / Linux 分轨渲染脚本"),
+        RENDER_STEMS_BAT => Some("Windows 分轨渲染脚本"),
+        MANIFEST_JSON => Some("本次导出的汇总（镜数、时长、待办）"),
+        README_TXT => Some("本说明文件"),
+        _ => None,
+    }
+}
 
 fn readme(project: &Project, manifest: &Manifest, root: &Path) -> String {
     let seconds = manifest.total_ms as f64 / 1000.0;
@@ -922,56 +1528,86 @@ fn readme(project: &Project, manifest: &Manifest, root: &Path) -> String {
         )
     };
 
-    format!(
-        "TakeKit 剪辑工程包\n\
-         ==================\n\
-         \n\
-         项目：{}\n\
-         导出时间：{}\n\
-         导出预设：{}（{}x{}，{}fps）\n\
-         成片时长：{:.1} 秒\n\
-         输出文件：{}\n\
-         \n\
-         包内文件\n\
-         --------\n\
-         timeline.json    四轨结构化时间线（片段 / 配音 / 字幕 / BGM 与音效）\n\
-         subtitles.srt    软字幕，可导入任意剪辑软件\n\
-         subtitles.ass    带样式字幕；burn_in 打开时已烧进画面\n\
-         materials.csv    素材清单：每个被引用的文件与它的用途\n\
-         manifest.json    本次导出的汇总（镜数、时长、待办）\n\
-         render.sh        macOS / Linux 一键渲染脚本\n\
-         render.bat       Windows 一键渲染脚本\n\
-         \n\
-         怎么用\n\
-         ------\n\
-         1. 装好 ffmpeg（命令行能跑 `ffmpeg -version` 即可）。\n\
-         2. 本包不复制媒体，脚本按下面的 ROOT 去找素材：\n\
-            ROOT = {}\n\
-            换台机器时，请按 materials.csv 把素材放回原来的相对位置，\n\
-            或直接改脚本里的 ROOT 指向新位置。\n\
-         3. 运行 render.bat（Windows）或 bash render.sh（macOS / Linux）。\n\
-         4. 产物为 {}。软字幕在 subtitles.srt，可另外导入剪辑软件。\n\
-         \n\
-         转场说明\n\
-         --------\n\
+    let mut out = String::new();
+    out.push_str("TakeKit 剪辑工程包\n");
+    out.push_str("==================\n\n");
+    out.push_str(&format!("项目：{}\n", project.name));
+    out.push_str(&format!("导出时间：{}\n", manifest.created_at));
+    out.push_str(&format!(
+        "导出预设：{}（{}x{}，{}fps）\n",
+        manifest.preset, manifest.width, manifest.height, manifest.fps
+    ));
+    out.push_str(&format!("成片时长：{:.1} 秒\n", seconds));
+    out.push_str(&format!("输出文件：{}\n\n", manifest.output));
+
+    // 包内文件：固定文件按用途列，媒体文件单列一区块。
+    out.push_str("包内文件\n--------\n");
+    for name in &manifest.files {
+        if name == README_TXT {
+            continue;
+        }
+        if let Some(purpose) = describe(name) {
+            out.push_str(&format!("{name:<18}{purpose}\n"));
+        }
+    }
+    let media: Vec<&String> = manifest
+        .files
+        .iter()
+        .filter(|name| describe(name).is_none())
+        .collect();
+    if !media.is_empty() {
+        out.push_str("\n包内媒体\n--------\n");
+        out.push_str("本包已自带下列媒体，可直接搬走后渲染：\n");
+        for name in media {
+            out.push_str(&format!("{name}\n"));
+        }
+    }
+    out.push('\n');
+
+    out.push_str("怎么用\n------\n");
+    out.push_str("1. 装好 ffmpeg（命令行能跑 `ffmpeg -version` 即可）。\n");
+    if manifest.self_contained {
+        out.push_str(
+            "2. 本包已自带媒体：被引用的片段 / 配音 / BGM / 音效都复制进了 media/，\n   \
+             脚本按包内相对路径取用，整个目录可以搬去任何地方直接渲染。\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "2. 本包不复制媒体，脚本按下面的 ROOT 去找素材：\n   ROOT = {}\n   \
+             换台机器时，请按 materials.csv 把素材放回原来的相对位置，\n   \
+             或直接改脚本里的 ROOT 指向新位置。\n",
+            normalize_path(root)
+        ));
+    }
+    out.push_str("3. 运行 render.bat（Windows）或 bash render.sh（macOS / Linux）。\n");
+    out.push_str(&format!(
+        "4. 产物为 {}。软字幕在 subtitles.srt，可另外导入剪辑软件。\n",
+        manifest.output
+    ));
+
+    if manifest.files.iter().any(|name| name == RENDER_STEMS_SH) {
+        out.push_str("\n分轨音频\n--------\n");
+        out.push_str(
+            "运行 render_stems.bat（Windows）或 bash render_stems.sh，可另外导出四条 WAV 分轨：\n\
+             stems_voice.wav    纯人声（配音 / 旁白）\n\
+             stems_bgm.wav      纯 BGM（已按对白闪避）\n\
+             stems_sfx.wav      纯音效\n\
+             stems_novoice.wav  BGM + 音效（无配音混音）\n\
+             便于在剪辑软件里单独调音或做二创。\n",
+        );
+    }
+
+    out.push_str(
+        "\n转场说明\n--------\n\
          应用不做复杂特效：dissolve / whip_pan 只记录在 timeline.json，\n\
-         渲染时按硬切拼接；fade_in / fade_out 用 0.3 秒淡入淡出实现。\n\
-         \n\
-         待办\n\
-         ----\n\
-         {}\n",
-        project.name,
-        manifest.created_at,
-        manifest.preset,
-        manifest.width,
-        manifest.height,
-        manifest.fps,
-        seconds,
-        manifest.output,
-        normalize_path(root),
-        manifest.output,
-        pending,
-    )
+         渲染时按硬切拼接；fade_in / fade_out 用 0.3 秒淡入淡出实现。\n",
+    );
+
+    out.push_str("\n待办\n----\n");
+    out.push_str(&pending);
+    out.push('\n');
+
+    out
 }
 
 // ---------- 数据文档 ----------
@@ -1014,6 +1650,7 @@ struct Manifest {
     sfx_count: usize,
     lipsync_enabled: usize,
     burn_in: bool,
+    self_contained: bool,
     output: String,
     files: Vec<String>,
     pending_voice_lines: Vec<String>,
@@ -1245,6 +1882,7 @@ mod tests {
             root.display().to_string(),
             project,
             dest.display().to_string(),
+            None,
         )
         .unwrap();
 
@@ -1305,6 +1943,7 @@ mod tests {
             root.display().to_string(),
             project,
             dest.display().to_string(),
+            None,
         )
         .unwrap_err();
 
@@ -1325,6 +1964,7 @@ mod tests {
             root.display().to_string(),
             project,
             dir.path().join("pack").display().to_string(),
+            None,
         )
         .unwrap_err();
         assert_eq!(error.code(), "not_found");
@@ -1350,6 +1990,7 @@ mod tests {
             root.display().to_string(),
             project,
             dest.display().to_string(),
+            None,
         )
         .unwrap();
 
@@ -1389,6 +2030,7 @@ mod tests {
             root.display().to_string(),
             project,
             dest.display().to_string(),
+            None,
         )
         .unwrap();
 
@@ -1396,5 +2038,169 @@ mod tests {
         let expected = normalize_path(&music);
         assert!(sh.contains(&expected), "{sh}");
         assert!(sh.contains("-stream_loop -1"));
+    }
+
+    #[test]
+    fn export_post_pack_writes_extra_text_formats() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        let project = sample_project(&root);
+        let dest = dir.path().join("pack");
+
+        export_post_pack(
+            root.display().to_string(),
+            project,
+            dest.display().to_string(),
+            None,
+        )
+        .unwrap();
+
+        let vtt = fs::read_to_string(dest.join(SUBTITLES_VTT)).unwrap();
+        assert!(vtt.starts_with("WEBVTT"));
+        assert!(vtt.contains("00:00:00.200 --> 00:00:01.100"));
+
+        let lines = fs::read_to_string(dest.join(SCRIPT_LINES)).unwrap();
+        assert!(lines.contains("[第 1 镜]"));
+        assert!(lines.contains("你好"));
+
+        let edl = fs::read_to_string(dest.join(TIMELINE_EDL)).unwrap();
+        assert!(edl.contains("FCM: NON-DROP FRAME"));
+        assert!(edl.contains(
+            "001  AX       V     C        00:00:00:00 00:00:03:00 00:00:00:00 00:00:03:00"
+        ));
+        assert!(edl.contains("* FROM CLIP NAME: clips/001_01.mp4"));
+
+        // 有音频，分轨脚本应当一并产出。
+        assert!(dest.join(RENDER_STEMS_SH).is_file());
+        assert!(dest.join(RENDER_STEMS_BAT).is_file());
+        let stems_sh = fs::read_to_string(dest.join(RENDER_STEMS_SH)).unwrap();
+        assert!(stems_sh.contains(STEM_VOICE));
+        assert!(stems_sh.contains("-c:a pcm_s16le"));
+    }
+
+    #[test]
+    fn export_post_pack_can_skip_optional_outputs() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        let project = sample_project(&root);
+        let dest = dir.path().join("pack");
+
+        let options = PostPackOptions {
+            self_contained: false,
+            webvtt: false,
+            script_lines: false,
+            edl: false,
+            stems: false,
+        };
+        export_post_pack(
+            root.display().to_string(),
+            project,
+            dest.display().to_string(),
+            Some(options),
+        )
+        .unwrap();
+
+        assert!(!dest.join(SUBTITLES_VTT).exists());
+        assert!(!dest.join(SCRIPT_LINES).exists());
+        assert!(!dest.join(TIMELINE_EDL).exists());
+        assert!(!dest.join(RENDER_STEMS_SH).exists());
+        assert!(dest.join(RENDER_SH).is_file());
+    }
+
+    #[test]
+    fn export_post_pack_self_contained_copies_media_and_rewrites_paths() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        let project = sample_project(&root);
+        let dest = dir.path().join("pack");
+
+        let options = PostPackOptions {
+            self_contained: true,
+            ..PostPackOptions::default()
+        };
+        let outcome = export_post_pack(
+            root.display().to_string(),
+            project,
+            dest.display().to_string(),
+            Some(options),
+        )
+        .unwrap();
+
+        let clip = dest.join(MEDIA_DIR).join("clip_001.mp4");
+        let voice = dest.join(MEDIA_DIR).join("voice_002.wav");
+        assert!(clip.is_file(), "片段未复制进 media/");
+        assert!(voice.is_file(), "配音未复制进 media/");
+        assert!(outcome
+            .files
+            .iter()
+            .any(|file| file == "media/clip_001.mp4"));
+
+        let sh = fs::read_to_string(dest.join(RENDER_SH)).unwrap();
+        assert!(sh.contains("media/clip_001.mp4"));
+        assert!(!sh.contains("/clips/001_01.mp4"), "{sh}");
+
+        let materials = fs::read_to_string(dest.join(MATERIALS_CSV)).unwrap();
+        assert!(materials.contains("media/clip_001.mp4"));
+        assert!(materials.contains("media/voice_002.wav"));
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dest.join(MANIFEST_JSON)).unwrap()).unwrap();
+        assert_eq!(manifest["selfContained"], true);
+
+        let readme = fs::read_to_string(dest.join(README_TXT)).unwrap();
+        assert!(readme.contains("已自带媒体"));
+        assert!(readme.contains("media/clip_001.mp4"));
+    }
+
+    #[test]
+    fn stem_graphs_cover_the_expected_roles() {
+        let inputs = vec![
+            InputKind::Video {
+                transition: Transition::Cut,
+                duration_ms: 3_000,
+            },
+            InputKind::Voice { start_ms: 200 },
+            InputKind::Bgm { volume: 50 },
+            InputKind::Sfx {
+                at_ms: 500,
+                volume: 80,
+            },
+        ];
+        let stems = stem_graphs(&inputs, true);
+        let files: Vec<&str> = stems.iter().map(|stem| stem.file).collect();
+        assert_eq!(files, vec![STEM_VOICE, STEM_BGM, STEM_SFX, STEM_NOVOICE]);
+
+        let voice = stems.iter().find(|s| s.role == AudioRole::Voice).unwrap();
+        assert!(voice.graph.contains("adelay=200:all=1"));
+        assert!(voice.graph.contains("[aout]"));
+        assert!(!voice.graph.contains(SIDECHAIN));
+
+        let bgm = stems.iter().find(|s| s.role == AudioRole::Bgm).unwrap();
+        assert!(bgm.graph.contains(SIDECHAIN));
+        assert!(bgm.graph.contains("[aout]"));
+
+        let sfx = stems.iter().find(|s| s.role == AudioRole::Sfx).unwrap();
+        assert!(sfx.graph.contains("adelay=500:all=1"));
+
+        let novoice = stems.iter().find(|s| s.role == AudioRole::NoVoice).unwrap();
+        assert!(novoice.graph.contains(SIDECHAIN));
+        assert!(novoice.graph.contains("adelay=500:all=1"));
+
+        // 没有 BGM 时不出「无配音」分轨。
+        let only_voice = stem_graphs(&[InputKind::Voice { start_ms: 0 }], false);
+        assert_eq!(only_voice.len(), 1);
+        assert_eq!(only_voice[0].file, STEM_VOICE);
+    }
+
+    #[test]
+    fn edl_timecode_counts_frames_at_the_project_fps() {
+        assert_eq!(edl_time(0, 30), "00:00:00:00");
+        assert_eq!(edl_time(1_000, 30), "00:00:01:00");
+        assert_eq!(edl_time(3_500, 30), "00:00:03:15");
+        assert_eq!(edl_time(1_000, 25), "00:00:01:00");
+        assert_eq!(edl_time(1_000, 0), "00:00:01:00");
     }
 }

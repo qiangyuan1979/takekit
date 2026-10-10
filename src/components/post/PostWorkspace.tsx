@@ -14,6 +14,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { assetSrc } from "../../lib/assetOps";
 import { api } from "../../lib/ipc";
+import type { PostPackOptions } from "../../lib/ipc";
 import {
   EXPORT_PRESETS,
   exportPresetById,
@@ -110,6 +111,13 @@ export function PostWorkspace() {
   const [generators, setGenerators] = useState<string[]>([]);
   const [provider, setProvider] = useState<string | null>(null);
   const [busy, setBusy] = useState<"voice" | "export" | null>(null);
+  const [packOptions, setPackOptions] = useState<PostPackOptions>({
+    selfContained: false,
+    webvtt: true,
+    scriptLines: true,
+    edl: true,
+    stems: true,
+  });
 
   useEffect(() => {
     let alive = true;
@@ -163,7 +171,7 @@ export function PostWorkspace() {
     if (typeof dir !== "string") return;
     setBusy("export");
     try {
-      const outcome = await api.exportPostPack(projectPath, project, dir);
+      const outcome = await api.exportPostPack(projectPath, project, dir, packOptions);
       addExportRecord(outcome.record);
     } catch (error) {
       reportError(error);
@@ -268,9 +276,41 @@ export function PostWorkspace() {
               {preset ? `${preset.resolution} · ${preset.aspectRatio}` : "未选预设"}
             </span>
           </div>
+          <div className="export-row">
+            <span className="export-row__label">附加内容</span>
+            <Toggle
+              checked={packOptions.webvtt}
+              onChange={(next) => setPackOptions((prev) => ({ ...prev, webvtt: next }))}
+              label="WebVTT 字幕"
+            />
+            <Toggle
+              checked={packOptions.scriptLines}
+              onChange={(next) => setPackOptions((prev) => ({ ...prev, scriptLines: next }))}
+              label="台词本"
+            />
+            <Toggle
+              checked={packOptions.edl}
+              onChange={(next) => setPackOptions((prev) => ({ ...prev, edl: next }))}
+              label="EDL 时间线"
+            />
+            <Toggle
+              checked={packOptions.stems}
+              onChange={(next) => setPackOptions((prev) => ({ ...prev, stems: next }))}
+              label="分轨音频脚本"
+            />
+          </div>
+          <div className="export-row">
+            <span className="export-row__label">媒体处理</span>
+            <Toggle
+              checked={packOptions.selfContained}
+              onChange={(next) => setPackOptions((prev) => ({ ...prev, selfContained: next }))}
+              label="自带媒体（复制进包内 media/，整包可搬走）"
+            />
+          </div>
           <p className="sdnote sdnote--hint">
             工程包含时间线 JSON、SRT / ASS 字幕、素材清单与一键运行的 ffmpeg
-            脚本；换台机器按清单放回素材即可出片。
+            脚本；换台机器按清单放回素材即可出片。勾选「自带媒体」会把片段、配音、BGM
+            与音效复制进包内，脚本改用包内相对路径，整包拷到别的电脑也能直接渲染。
           </p>
         </div>
       </section>

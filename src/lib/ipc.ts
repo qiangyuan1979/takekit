@@ -81,6 +81,20 @@ export interface PostPackOutcome {
   files: string[];
 }
 
+/** 剪辑工程包的附加选项，字段名与 Rust `PostPackOptions` 一致。 */
+export interface PostPackOptions {
+  /** 把被引用的媒体复制进包内 `media/`，整包可搬走。 */
+  selfContained: boolean;
+  /** 额外输出 WebVTT 软字幕。 */
+  webvtt: boolean;
+  /** 额外输出纯文本台词本。 */
+  scriptLines: boolean;
+  /** 额外输出 EDL（可导入 Premiere / 达芬奇）。 */
+  edl: boolean;
+  /** 额外输出分轨渲染脚本与混音变体。 */
+  stems: boolean;
+}
+
 /** 一次性生图的传输形态，字段名与 Rust `GenerateImageArgs` 一致。 */
 export interface GenerateImageRequest {
   prompt: string;
@@ -247,6 +261,10 @@ export const api = {
   cancelVoiceTasks: (taskIds: string[]) => call<number>("cancel_voice_tasks", { taskIds }),
 
   /** 导出剪辑工程包到目录；返回目录、导出记录与包内文件清单。 */
-  exportPostPack: (projectPath: string, project: Project, destDir: string) =>
-    call<PostPackOutcome>("export_post_pack", { projectPath, project, destDir }),
+  exportPostPack: (
+    projectPath: string,
+    project: Project,
+    destDir: string,
+    options: PostPackOptions,
+  ) => call<PostPackOutcome>("export_post_pack", { projectPath, project, destDir, options }),
 };
