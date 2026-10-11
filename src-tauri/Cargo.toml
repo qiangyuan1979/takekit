@@ -1,6 +1,6 @@
 [package]
 name = "takekit"
-version = "0.1.0"
+version = "0.2.0"
 description = "TakeKit - 新手友好的短视频 / 短剧辅助制作工具"
 authors = ["qiangyuan1979"]
 edition = "2021"
